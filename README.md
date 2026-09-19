@@ -1,226 +1,149 @@
-# LAB-1: 机器启动
+# LAB-2: 内存管理初步
+
+**前言**
+
+在lab-1中, 我们学习了机器启动流程、UART设备驱动、格式化输出和自旋锁
+
+完成lab-1后, OS内核已经可以启动、打印, 但对内存的态度是"拿来就用": 代码里写0x80200000, CPU就去访问物理地址0x80200000
+
+在lab-2中, 我们开始认识和管理"程序除了CPU外最常访问的共享资源——内存"
+
+内存管理不是一步到位的, lab-2主要关注物理内存和内核态虚拟内存, 剩余部分将在后面的实验逐渐完善
+
+本阶段要引入两件事:
+
+```
+   物理内存分配器   ——  "哪些页是空闲的, 我要一页"
+   Sv39 页表        ——  "这个虚拟地址对应哪个物理地址"
+```
+
+然后在最后打开分页(往satp写页表地址)。从那一刻起, 内核里每一行代码访问的地址都要先经过页表翻译
 
 ## 1. 代码组织结构
-```
-ecnu-oslab-2026-rs
-├── Cargo.toml / rust-toolchain.toml   Rust 2024 edition
-├── configs/                           配置档案: arch + platform 两维
-│   ├── riscv64-qemu-virt.toml
-│   └── riscv64-visionfive2.toml
-├── xtask/                             构建系统 (cargo xtask build|run|disk ...)
-├── crates/
-│   ├── hal/                           硬件抽象层 (arch + platform)
-│   │   ├── build.rs                   编译期校验: 恰好一个 arch + 恰好一个 platform
-│   │   └── src/
-│   │       ├── arch/riscv64/          CPU 语义: CSR / SBI / trap / 启动
-│   │       │   ├── boot.rs            内核第一条指令 (global_asm)
-│   │       │   ├── cpu.rs             hartid / cpuid 换算
-│   │       │   ├── csr.rs             CSR 读写
-│   │       │   ├── sbi.rs             SBI 调用 (固件控制台等)
-│   │       │   ├── time.rs            rdtime
-│   │       │   └── trap.rs            最小 trap 兜底点
-│   │       ├── platform/              机器语义: 地址、中断号、CPU 拓扑
-│   │       │   ├── qemu_virt.rs
-│   │       │   └── visionfive2.rs
-│   │       └── putchar.rs             极简输出 (panic 路径也要能用)
-│   ├── drivers/                       设备协议
-│   │   ├── serial/uart16550.rs        两个平台复用的 16550 驱动
-│   │   └── mmio.rs                    MMIO 读写封装
-│   └── kernel/                        OS 语义 (不知道自己在哪台机器上)
-│       └── src/
-│           ├── main.rs                启动流程 + 模块声明
-│           ├── console.rs (TODO)      格式化输出
-│           └── panic.rs               panic 处理器
-└── user/                              用户态程序 (本阶段还没有)
-```
-
-## 2. 实验核心目标
-
-让内核在 QEMU(OpenSBI) 与 VisionFive2(U-Boot) 两块平台上启动，并通过
-真实的 16550 串口打印出板级参数。
-
-## 3. 机器是怎么启动的
-
-### 3.1 从固件到内核
 
 ```
-   上电
-    │
-    ├─ M-mode 固件 (QEMU: OpenSBI / VF2: U-Boot 内部的 OpenSBI)
-    │     初始化 DRAM、时钟、串口……
-    │
-    ├─ 跳转到 S-mode 内核入口 (hal/arch/riscv64/boot.rs)
-    │     ★ 从这里开始是本课程要写的代码
-    │
-    └─ kernel::main()
+crates/hal/src/arch/riscv64/
+├── mm.rs          Sv39 页表格式: 页表项、VPN 拆分、satp 写入、TLB 刷新
+├── smp.rs         从核启动 (SBI HSM)
+└── smp_entry.rs   从核的汇编入口
+
+crates/kernel/src/
+├── mm/
+│   ├── mod.rs     内存子系统的公开接口
+│   ├── pmem.rs  物理页分配器: 空闲页链表、分配与释放  (TODO, pmem_init/build_free_list)
+│   └── vm.rs      内核页表的建立与映射 (kvm_init)  (TODO, walk_create/map/kvm_init)
+└── secondary.rs   从核在 Rust 侧要做的初始化
 ```
 
-固件已经做完了 M-mode 的脏活，所以内核一上来就在 S-mode。代价是 S-mode 不能
-直接写 `mtimecmp`，设置时钟中断必须通过 SBI 请固件代劳（lab-3 会看到）。换来
-的是同一份代码能在所有 RISC-V 平台上跑。
+`hal` 只提供**机制**(怎么建映射), `kernel` 决定**策略**(建哪些映射)
 
-### 3.2 固件交给我们的寄存器约定
+本分支里需要完成的函数:
 
-| 寄存器 | 含义 |
-|---|---|
-| `a0` | 启动核的 hartid |
-| `a1` | 设备树 (DTB) 的物理地址 —— 本课程不使用 DTB，约定保持一致 |
-| `satp` | 0（分页未开启） |
-| `sp` | **未定义**！内核必须自己建立栈 |
-
-最后一条最容易出事：内核的第一条指令执行时没有可用的栈。所以 `boot.rs` 的
-第一件事不是 `call`，而是先算出一个栈地址写进 `sp`。
-
-### 3.3 两台机器传给我们的 hartid 不一样
-
-| | QEMU virt | VisionFive2 |
+| 文件 | 函数 | 属于 |
 |---|---|---|
-| DRAM 起点 | `0x80000000` | `0x40000000` |
-| 内核加载地址 | `0x80200000` | `0x40200000` |
-| 启动核 hartid | **0** | **1** |
-| 可用 hart 区间 | `[0, 1]` | `[1, 3]` |
-| UART0 地址 | `0x10000000` | `0x10000000` |
-| UART0 中断号 | 10 | **32** |
-| 输入时钟 | 3 686 400 Hz | 24 000 000 Hz |
+| `crates/kernel/src/console.rs` | `print_hex_bare` / `print_dec` | lab-1 |
+| **`crates/kernel/src/mm/pmem.rs`** | **`pmem_init`** | **lab-2** |
+| **`crates/kernel/src/mm/pmem.rs`** | **`build_free_list`** | **lab-2** |
+| **`crates/kernel/src/mm/vm.rs`** | **`walk_create`** | **lab-2** |
+| **`crates/kernel/src/mm/vm.rs`** | **`map`** | **lab-2** |
+| **`crates/kernel/src/mm/vm.rs`** | **`kvm_init`** | **lab-2** |
 
-VisionFive2 的 hart 0 被监控核占用，所以它的启动核是 hartid **1**。
+## 第一阶段: 物理内存
 
-内核里到处需要的是"第几个核"（`cpuid`，从 0 开始），固件给的是 hartid。
-换算必须由平台层提供（`boot_hart`），因为"哪些 hart 归内核用"是这台机器的
-事实。
+物理内存按照地址空间划分为几个部分:
 
-写死 `if hartid == 0` 的后果：在 VisionFive2 上没有任何核会执行启动核的
-初始化代码 —— 现象是内核一句话都不打印。
+```
+   0x80000000 ┌────────────────────────┐
+              │ 内核镜像 (代码 + 数据)  │  链接时确定
+   ALLOC_BEGIN├────────────────────────┤
+              │ 内核保留区 (4 MiB)      │  kernel/ 的分配器从这里取页
+              ├────────────────────────┤
+              │ 用户区                  │  用户进程的页面从这里取
+   DRAM 末尾  └────────────────────────┘
+```
 
-## 4. 串口：本实验唯一的设备
+内核区与用户区分开: 如果共用, 用户态就可能被分配到内核数据结构所在的页——那是灾难性的。分成两段之后, "分配用户页"和"分配内核页"是两条互不干扰的路径
 
-### 4.1 为什么是 16550
+`build_free_list` 的要点:
 
-16550 是 1987 年的 PC 串口芯片，但几乎所有 RISC-V 开发板都集成了兼容核。
-差异全部来自平台常量：
+空闲页链表把 `next` 指针**直接写在空闲页自己的头8字节**里——反正那一页没人用。这带来两个要求:
+
+1. 建链要从**高地址往低地址**串(这样第一次分配返回最低的页, 顺序好预测, 调试时容易对照地址)
+2. `for i in (0..pages).rev()` 里对 `usize` 做减法要防止下溢
+
+对齐也要想清楚: `kernel_end` 必须**再向上对齐一次**到页边界。不对齐的话, 内核保留区的尾巴会被当成一个完整空闲页发出去——症状是内核在运行中莫名其妙把自己踩了
+
+## 第二阶段: Sv39 页表
+
+通过"地址"可以区分每个4KB物理页, 但为了方便编程, 我们给应用程序提供"独占内存资源"的幻觉。为此引入**虚拟内存**: 建立一个表格, 记录虚拟地址到物理地址的对应关系, 并通过MMU自动完成翻译
+
+Sv39 把 39 位虚拟地址拆成三段各9位, 加上页内12位偏移:
+
+```
+   38        30 29      21 20      12 11         0
+   ┌───────────┬──────────┬──────────┬────────────┐
+   │  VPN[2]   │  VPN[1]  │  VPN[0]  │   偏移      │
+   └───────────┴──────────┴──────────┴────────────┘
+        │           │          │
+        ▼           ▼          ▼
+      根表 ──►    中间表 ──►  叶子表 ──► 物理页
+```
+
+**遍历顺序与地址位的顺序是相反的**: 根用 `VPN[2]`, 叶子用 `VPN[0]`。写反了不会报错, 但映射会落在完全不同的地址上
+
+### walk_create 的要点
+
+```
+   1. 从根表开始, 依次取 VPN[2] / VPN[1] / VPN[0]
+   2. 每一级: 页表项无效 (V=0) 时, 如果需要建表就分配一个物理页
+      作为下一级页表, 并把页表项设为"指向它 + 有效"
+   3. 到叶子级时返回该页表项的地址 (由调用者填入 PPN + 权限位)
+```
+
+三个坑:
+
+- **新分配的页表页必须清零**。里面的随机数据会被当成有效的页表项, 于是"凭空"出现一堆映射
+- **下标算错**: `(va >> (12 + 9 * level)) & 0x1ff`
+- **页表自己所在的页也要被映射**。恒等映射下这是自动成立的, 但如果映射范围算漏了一段, 现象是"刚写完 satp 就崩"
+
+### 打开分页: 恒等映射
+
+本内核使用**恒等映射**(虚拟地址 == 物理地址), 所以打开分页前后行为一致, 可以直接写 `satp` 而不需要 trampoline 技巧
+
+真实内核用带偏移的映射(内核在高地址、物理内存在低地址), 那时必须用 trampoline 保证"切换瞬间的那条指令"在两套映射下地址相同
+
+### satp 里放的是页号, 不是地址
 
 ```rust
-let clock = PLATFORM.uart0_clock;   /* 分频用 */
-let irq   = PLATFORM.uart0_irq;     /* 注册中断用 */
-let base  = PLATFORM.uart0_base;    /* 寄存器窗口 */
+satp = (8 << 60) | (root_ppn)      // 8 = Sv39, 低 44 位是【物理页号】
 ```
 
-驱动源码一行都不用改。
+写错成物理地址的后果是**下一条取指就缺页**, 而那时表现为"完全没有输出"——非常难查
 
-### 4.2 波特率分频
-
-```
-   除数 = 时钟频率 / (16 * 波特率)
-
-   115200 波特率下:  QEMU 3686400/(16*115200) = 2
-                     VF2  24000000/(16*115200) = 13
-```
-
-分频算错的症状是输出全是乱码 —— 而内核"确实在运行"，很容易误判成逻辑问题。
-
-## 5. 具体任务
-
-本分支里下面这些函数体是空的（`{ }`）：
-
-| 文件 | 函数 |
-|---|---|
-| `crates/kernel/src/console.rs` | `print_hex_bare`：不带 `0x` 前缀的十六进制 |
-| `crates/kernel/src/console.rs` | `print_dec`：十进制 |
-
-这是 printf 的地基：后面每个实验里你都会大量用它打印地址、进程号、inode 号。
-一个会输出错数字的格式化函数会让所有调试输出都不可信。
-
-### 5.1 `print_hex_bare` 的要点
-
-- 64 位最多 16 个十六进制数字，用一个栈上的 `[u8; 16]` 缓冲区
-- 取模天然是从低位开始的，而输出要从高位到低位 —— 所以先存后倒序输出
-- **`0` 要单独处理**：不处理的话循环一次都不执行，输出空字符串
-- 用 `putchar::putc` 输出，不要用 `core::fmt`（体积大得多）
-
-### 5.2 `print_dec` 的要点
-
-和 `print_hex_bare` 结构完全一样，只是进制换成 10。同样要注意 `0` 与
-`usize::MAX` 两个边界。
-
-### 5.3 现在你应该看到什么
-
-实现之前，启动横幅里的数字位置是空白：
-
-```
-[oslab-rs] uart16550 ready @ 0x divisor= irq=
-```
-
-实现之后：
-
-```
-[oslab-rs] uart16550 ready @ 0x10000000 divisor=2 irq=10
-```
-
-这就是本阶段的验收标准：数字出现了，而且与平台常量一致。
-
-## 6. 测试
-
-### 6.1 QEMU
+## 测试
 
 ```bash
 cargo xtask run --config riscv64-qemu-virt
 ```
 
-### 6.2 VisionFive2
+实现正确时应当看到:
 
-```bash
-cargo xtask build --config riscv64-visionfive2
-cargo xtask image --config riscv64-visionfive2     # 生成 kernel.itb
+```
+[oslab-rs] pmem : 内核区 ... / ... 页空闲, 用户区 ... / ... 页空闲
+[oslab-rs] kvm  : 根页表 @ 0x..., 已映射 ... 页
+[oslab-rs] kvm  : 地址翻译自检 0x80200000 -> 0x80200000 (恒等映射, 正确)
+[oslab-rs] boot complete.
 ```
 
-输出应与 QEMU 结构完全相同，只有数值不同：`DRAM 0x40000000`、
-`kernel 0x40200000`、`boot hart = 1`、`irq = 32`。
+第三行是**本阶段的验收标准**: 它说明页表真的在工作(内核地址经翻译后等于它自己)。注意 `0x80200000` 是**正在跑这段代码的地址**——这一行能打印出来, 本身就是"分页已经打开并且没把自己映射错"的证据
 
-### 6.3 自检清单
+这三行出现在 `boot complete` **之前**。分页必须在物理页分配器之后、在其它子系统之前建立——建页表本身就要分配物理页
 
-- [ ] 内核的第一条指令执行时，`sp` 里是什么？我们怎么解决？
-- [ ] VisionFive2 的启动核为什么是 hartid 1 而不是 0？
-- [ ] `cpuid` 与 `hartid` 的区别是什么？为什么需要换算？
-- [ ] 串口分频在 QEMU 上是 2、VF2 上是 13。为什么驱动源码不用改？
-- [ ] 为什么 `print_dec(0)` 需要单独处理？
-- [ ] 为什么 `kernel/` 里不允许出现 `#[cfg(feature = "platform-...")]`？
+**尾声**
 
-## 7. 关于代码仓库的维护
+这次实验在 `kvm_init` 里埋下了一些伏笔: 设备区、中断相关寄存器的映射还没用起来
 
-1. 每次实验需要在上次实验的基础上继续往下做，假设你已经完成 lab-0(master)
-
-    那么你此时应该在 lab-0(master) 分支下使用 `git checkout -b lab-1` 命令
-    创建并切换到新的分支 lab-1
-
-    此时新建的 lab-1 会继承 lab-0(master) 的内容，但你对 lab-1 的修改不会
-    影响到 lab-0
-
-    以此类推，当你从 lab-1 开始走到 lab-9 时，你会获得越来越完整和强大的内核
-
-2. 你的代码仓库应该由 **代码 + Markdown文档** 两部分构成
-
-    文档内容不做明确要求，你有很高的自由度决定写什么和写多少
-
-    提供一些建议：
-
-    - 本次实验新增了哪些功能，实现了什么效果
-
-    - 对本次实验中某个过程的理解和思考
-
-    - 本次实验和之前的实验构成什么样的逻辑联系
-
-    - 本次实验花费的时间, 你和队友的贡献分别是什么
-
-    - 可以使用 markdown 的分层分点来增加条理性，便于别人阅读和抓住重点
-
-    **总之，这是你的代码仓库，请对你自己的代码和文档负责**
-
-    **注意，代码是继承和连续发展的, 但文档不是，每次的文档都是全新一页**
-
-3. 提醒: 之所以要求大家维护代码仓库，是为了查看大家的提交记录
-
-    所以请及时同步当天写的代码到线上仓库，不要攒到最后一口气提交，否则可能
-    被误判为不当行为
+不要着急, 下一次实验的主题是——**中断和异常**, 那时会用到
 
 ---
 
@@ -236,71 +159,72 @@ cargo xtask image --config riscv64-visionfive2     # 生成 kernel.itb
 
 ---
 
-### 6.1 bootinfo：把"这次启动是怎么发生的"收进一个结构
+### 6.1 buddy 分配器
 
-**为什么值得做**：现在"固件怎么交接"这件事散在三处——`crates/hal/src/arch/riscv64/boot.rs` 的 `global_asm!` 里 a0/a1 的约定、
-`crates/hal/src/arch/riscv64/cpu.rs` 里从 `tp` 与全局符号反推"谁启动了内核"、
-以及 `configs/riscv64-qemu-virt.toml` / `configs/riscv64-visionfive2.toml` 里的 `boot` 字段。
-更麻烦的是第三处：`boot = "sbi"` 与 `boot = "uboot"` 目前**只影响构建系统**（链接脚本与产物格式），
-内核代码侧根本没有对应的开关，加第二个启动协议时这些假设会被各写一遍。
-
-**思路**：
-- 定义一个只描述**本次启动事实**的结构（例如 `BootInfo`）：启动 hart、DTB 物理地址、早期控制台来源、
-  协议名、固件是否提供"启动其他 hart"的能力……**不要**放平台事实，那些仍然归 `crates/hal/src/platform/qemu_virt.rs` 与 `crates/hal/src/platform/visionfive2.rs`。
-- 让 boot 这一维真正进入代码：给 `crates/hal/Cargo.toml` 加上 `boot-sbi` / `boot-uboot` 两个 feature，
-  像 `crates/hal/build.rs` 现在校验 arch/platform 那样校验"恰好选中一个"，再由启动入口各自填这个结构。
-- 汇编现在只把 hartid 搬进 `tp`：a1（DTB 地址）是 caller-saved，必须在进 Rust 之前就存进一个固定的 `.data` 槽位，
-  否则第一次函数调用就没了——这一条与启动汇编里"抽签哨兵必须放 `.data`"是同一个理由。
-- `crates/kernel/src/main.rs` 与其它代码不再直接读启动全局符号或 `tp`，只读这个结构；
-  `crates/hal/src/arch/riscv64/cpu.rs` 的 `hartid()` / `cold_boot_hart()` 也改成从它取。
-- 两个现有协议都要填出完整内容，并打印一行便于对照。
-
-**怎么算做到**：两个现有配置下结构内容都正确；`crates/kernel/src/` 里不再出现 a0/a1 的原始语义与启动全局符号；
-再加一个 boot 维度时 `crates/kernel/` 一行都不用改。
-
-**涉及**：`crates/hal/src/arch/riscv64/boot.rs`、`crates/hal/src/arch/riscv64/cpu.rs`、`crates/hal/Cargo.toml`、`crates/hal/build.rs`、`configs/riscv64-qemu-virt.toml`、`configs/riscv64-visionfive2.toml`、`crates/kernel/src/main.rs`　**难度**：★★☆
-
-### 6.2 dtb 动态发现：平台事实的第二个来源
-
-**为什么值得做**：`crates/hal/src/platform/qemu_virt.rs` 里的 DRAM 基址、UART 地址、hart 区间现在都是**编译期常量**——
-这正是本仓库"不用设备树"的刻意取舍（理由写在 `crates/hal/src/platform/mod.rs` 顶部的长注释里）。
-而 a1 里一直拿着 DTB 的物理地址，启动汇编却没有保存它，等于把这个事实白白丢掉了。
-做完这条，你会同时理解"为什么需要 platform 层"和"平台层的事实还能从哪来"，也才有资格判断那个取舍在什么条件下不再成立。
+**为什么值得做**：现在 `crates/kernel/src/mm/pmem.rs` 的空闲页链表只能一页一页给，
+回答不了"我要连续 8 页"。而页表页、大页、DMA 缓冲都需要**物理连续**的块。
+buddy 是这个问题最经典、也最适合教学的回答：它把"外部碎片"变成可以观察、可以证明的现象；
+Rust 版还多一层好处——`Pool` 枚举已经把内核区/用户区显式分开，伙伴系统正好按池各建一套。
 
 **思路**：
-- 新增的 `crates/hal/src/arch/riscv64/fdt.rs`：一个最小的 FDT 遍历器——校验 header 魔数，
-  再按结构块走（开始节点 / 属性 / 结束节点），取出三件事：`/memory` 的 reg（DRAM 基址与大小）、
-  `/cpus` 的 timebase-frequency 与 hart 列表、串口节点的 reg（UART 基址）。
-- 启动汇编把 a1 保存下来（见 6.1），Rust 入口把它作为物理地址传给 FDT 遍历器；恒等映射下这地址可以直接读。
-- 与 `crates/hal/src/platform/mod.rs` 的编译期值**逐个对账**：一致就打印"一致"，不一致就以 DTB 为准并打印警告；
-  对账逻辑写成一个小函数，两个平台共用。
-- 注意 FDT 是**大端**，而且字段偏移都来自外来数据：每一处长度与偏移都要做边界检查，节点深度要设上限（防止成环）；
-  Rust 里读大端整数用 `u32::from_be_bytes` 即可，比手写移位更不容易错。
-- 可以先把 DTB 导出到文件离线观察：`qemu-system-riscv64 -machine virt,dumpdtb=/tmp/virt.dtb`。
+- 按 order 维护多条空闲链表（4KB、8KB、16KB……）：分配 order n 时若该级为空，就向上一级要一块、切一半，另一半挂到下一级。
+- 释放时找**伙伴**：伙伴地址 = 本块地址异或"块大小"；伙伴空闲就合并，逐级向上。
+- 需要一个"每页状态"数组来判断伙伴是空闲还是已分配（放在内核保留页里即可）；
+  链表头不要用裸指针乱串——`crates/kernel/src/mm/pmem.rs` 现在用 `AtomicUsize` 存页地址，
+  这个写法可以照搬（空闲页的第一个字存 `next`，是既有的约定）。
+- **接口兼容**：先让 buddy 实现现有 `pmem_alloc(pool)` / `pmem_free(pa, pool)` 的语义（后面每一章都在用它们），
+  再另外提供带 order 的版本；`pmem_stat()` 返回的四个数字必须仍然守恒。
+- 想清楚两个边界：请求的 order 超过上限时怎么办；`pmem_alloc` 用 0 表示失败这个约定不能破。
 
-**怎么算做到**：两个平台都能打印"从 DTB 读到的 DRAM/CPU/UART"三行，并给出与编译期值的一致/不一致结论；
-DTB 被截断或魔数不对时能报错而不是崩。
+**怎么算做到**：分配/释放计数守恒；反复分配 128 个 4 页块再全部释放后，仍能分配一个 512 页的连续块；
+故意释放未分配的块或重复释放能被明确抓住（`debug_assert!` 或 `assert!` 都行）。
 
-**涉及**：`crates/hal/src/arch/riscv64/boot.rs`、`crates/hal/src/platform/mod.rs`、`crates/hal/src/platform/qemu_virt.rs`、`crates/hal/src/platform/visionfive2.rs`　**难度**：★★★
+**涉及**：`crates/kernel/src/mm/pmem.rs`、`crates/kernel/src/mm/mod.rs`　**难度**：★★☆
 
-### 6.3 UEFI：第三个启动协议（可以先只做骨架）
+### 6.2 内核堆
 
-**为什么值得做**：这条检验的是本项目的核心设计目标——"启动维度可替换"是否真的成立。
-UEFI 与现有两种协议差别极大：产物是 PE/COFF、靠 Boot Services 拿内存与输出、
-退出服务后没有任何固件回调可用，而且它连链接脚本与入口约定都要另换一份。
+**为什么值得做**：内核里的小对象（进程控制块、缓冲区头、路径缓冲）现在要么静态数组、要么整页分配。
+有了内核堆，后面几章的表就能按需增长，它也是 slab 的前置。"内核里的动态内存"和"用户堆"完全是两件事，值得亲手做一次；
+Rust 版还有一件额外的事要想清楚：`crates/kernel` 是 `#![no_std]` 且**没有** `#[global_allocator]`，
+做完这条之后 `alloc::boxed::Box` / `alloc::vec::Vec` 才第一次可用。
 
-**思路**（分两级，建议先做 L1）：
-- **L1 只做骨架**：照 `configs/riscv64-qemu-virt.toml` 的写法新增一份 `boot = "uefi"` 的配置
-  （指向新的链接脚本与产物格式），给 `crates/hal` 加一个 `boot-uefi` feature 与一份入口实现，
-  把 6.1 的 bootinfo 填好，再用 `xtask` 把 ELF 转成 PE/COFF。
-  目标是在 QEMU 的 OVMF 固件下被加载并打印出第一行。全程**不改 `crates/kernel/`**，这正是要证明的东西。
-- **L2 才做真正的引导**：用 Boot Services 拿内存图、配置输出，`ExitBootServices` 之后再跳内核。
-- 关键差异提前想清楚：UEFI 下没有 SBI 控制台，早期输出从哪来？
-  （这正是 bootinfo 里"早期控制台来源"那一项存在的理由。）
-- 构建侧的落点：`xtask/src/build.rs` 现在按配置里的 `boot` 字段决定产物格式，UEFI 需要在那里加一条分支与一个新的镜像生成步骤；
-  `xtask/src/fit.rs` 是同类东西（U-Boot FIT）的现成范例，可以照着写。
+**思路**：
+- L1 简单 free-list：按大小分档（8/16/32/…/2048 字节），每档一条空闲链表，从整页里切分；大块直接走整页分配。
+- L2 slab：为"同类对象"建专用缓存（对象大小固定），后面进程表与缓冲区缓存都能受益。
+- 页从哪来：本阶段的恒等映射把整个 DRAM 都映射进了内核地址空间，所以 `pmem_alloc(Pool::Kernel)` 拿到的地址可以直接当指针用——
+  但如果将来把内核改成高半区（HHDM）映射，这里就必须走物理→虚拟的转换函数，别把这件事写死。
+- 三个必须想清楚的点：**堆的页从哪来**、**对齐**（至少满足最大对齐，设备 DMA 可能要求更高）、
+  **失败路径**（分配 0 字节、内存耗尽时返回什么、调用者怎么回滚）。
+- 落点建议：新增的 `crates/kernel/src/mm/heap.rs` + 在 `crates/kernel/src/mm/mod.rs` 里导出；
+  要不要顺手注册 `#[global_allocator]` 是一个**独立的决定**——注册之后 `crates/` 里任何人都能隐式分配，
+  那会打破现在"内核里没有隐式分配"这条纪律。建议先只提供显式的 `kmalloc` / `kfree`。
 
-**怎么算做到**：L1 在 OVMF 下能看到内核第一行输出，且 `git diff --stat crates/kernel/` 为空；
-L2 能把内存图交给物理页分配器，并说明它与 `crates/hal/src/platform/*.rs` 里那套常量的关系。
+**怎么算做到**：1 到 4096 字节各种大小都能分配、写满、释放、再分配且不重叠（用固定模式填充验证）；
+释放后 `pmem_stat()` 的空闲页数回到基线；越界写能被哨兵或 `assert!` 抓到。
 
-**涉及**：`configs/riscv64-qemu-virt.toml`、`configs/arch/riscv64.toml`、`crates/hal/Cargo.toml`、`crates/hal/src/arch/riscv64/boot.rs`、`xtask/src/build.rs`、`xtask/src/fit.rs`　**难度**：★★★（L1 ★★☆）
+**涉及**：`crates/kernel/src/mm/mod.rs`、`crates/kernel/src/mm/pmem.rs`、`crates/kernel/src/mm/vm.rs`　**难度**：★★☆
+
+### 6.3 大页支持（2MB 超级页）
+
+**为什么值得做**：Sv39 的中间级页表项可以**直接当叶子**用，一个项映射 2MB。这既减少页表页数与 TLB 压力，
+也是"页表粒度可选"最直观的教材。Rust 版在这件事上起跑线更靠前：`crates/kernel/src/mm/vm.rs` 里
+`map_megapages`（大页映射）、`map_range`（自己对齐、中间走大页、两头退 4 KiB）、`walk_leveled`
+（按级判断叶子）都已经写好——但**它们一个调用者都没有**，因为唯一该调用它们的 `kvm_init` 是本阶段的任务。
+所以这一条要做的是"把它真正用起来、把边界补完、把账算清"，而不是重写一遍。
+
+**思路**：
+- 先让 `kvm_init` 走 `map_range`（而不是自己写逐页循环，那样会**悄悄**丢掉大页的全部收益）；
+  DRAM 这类天然 2 MiB 对齐的大段于是自动用上大页，内核镜像与设备 MMIO 因为对齐/权限不同仍然细粒度映射。
+- 补掉 `map_megapages` 现在真正的短板：它跨过 1 GiB 边界就直接返回错误，
+  所以任何大于 1 GiB 的 DRAM 段都映射不了 —— 改成按 1 GiB 分段继续，并把这作为一条可验证的行为。
+- 自己核对 `translate_with` / `walk_leveled` 的按级偏移（4 KiB 用 `0xfff`，2 MiB 用 `0x1f_ffff`）：
+  用错粒度会让翻译结果在大页内部丢掉高位偏移，症状是"恒等映射自检失败"，而映射本身没错。
+- 想清楚统计口径：`pt.mapped` 是**页表项数**（一个大页项顶 512 个 4 KiB 项），
+  所以它下降多少不等于省下的内存多少；把两个数字都对上 `pmem_stat()` 才有说服力。
+- 拿一段 DRAM 做对照：同一段内存分别用 4 KiB 页与 2 MiB 页映射，比较页表页数量、`pt.mapped` 与 `pmem_stat()` 的消耗。
+
+**怎么算做到**：一段 4 MiB 内存用两个大页映射成功（打印 `pt.mapped` 的变化即可看出）；
+抽查首/中/尾地址翻译都正确；页表页数下降且对照数据能解释；故意把非对齐地址按大页映射时给出明确错误；
+一个跨 1 GiB 边界的段也能映射成功（这是你补上的那条）。
+
+**涉及**：`crates/kernel/src/mm/vm.rs`、`crates/kernel/src/mm/pmem.rs`、`crates/hal/src/arch/riscv64/mm.rs`　**难度**：★★★

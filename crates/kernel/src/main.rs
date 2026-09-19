@@ -30,6 +30,8 @@ pub mod config {
 // ---- 各子系统模块 ----
 pub mod console;
 pub mod panic;
+pub mod mm;
+pub mod secondary;
 // ---- 本阶段模块列表结束 ----
 
 // 由 build.rs 生成: 嵌入的 Rust 用户程序映像。
@@ -135,10 +137,84 @@ pub extern "C" fn kernel_entry() -> ! {
     // ---- 物理内存: 建立页分配器 ----
     // 必须在分页之前 (分页要分配页表页); 只启动核做 (会重建整个空闲链表,
     // 两核同跑会把链表串成两半)。
+    if arch::cpu::is_boot_hart() {
+        mm::pmem::pmem_init();
+    }
+
+    // ---- 分页: 建立并激活内核页表 ----
+    // kvm_init 建表, kvm_init_hart 激活, 分开让"建错了"与"装错了"可区分。
+    // 必须在物理页分配器之后 (建页表本身要分配物理页)。
+    if arch::cpu::is_boot_hart() {
+        mm::vm::kvm_init();
+    }
+    mm::vm::kvm_init_hart();
+
+    // ---- 自检: 把"内存管理对不对"变成看得见的数字 ----
+    // 物理页分配器、页表、地址翻译都是看不见的 (做对了没输出)。下面把证据
+    // 摆出来与平台常量对照: 空闲页数、页表根页、已映射页数, 以及"恒等映射
+    // 翻译结果==输入" —— 这条证明页表真的在工作。
+    if arch::cpu::is_boot_hart() {
+        let (kfree, ktotal, ufree, utotal) = mm::pmem::pmem_stat();
+        oslab_hal::putchar::puts("[oslab-rs] pmem : 内核区 ");
+        console::print_dec(kfree);
+        oslab_hal::putchar::puts(" / ");
+        console::print_dec(ktotal);
+        oslab_hal::putchar::puts(" 页空闲, 用户区 ");
+        console::print_dec(ufree);
+        oslab_hal::putchar::puts(" / ");
+        console::print_dec(utotal);
+        oslab_hal::putchar::puts(" 页空闲\n");
+
+        if let Some((root, mapped)) = mm::vm::kvm_stat() {
+            oslab_hal::putchar::puts("[oslab-rs] kvm  : 根页表 @ ");
+            console::print_hex(root);
+            oslab_hal::putchar::puts(", 已映射 ");
+            console::print_dec(mapped);
+            oslab_hal::putchar::puts(" 页\n");
+        }
+
+        // 恒等映射: 翻译内核基地址应原样返回。取内核自己的入口地址最合适。
+        let probe = arch::cpu::platform().kernel_base;
+        match mm::vm::kvm_translate(probe) {
+            Some(pa) if pa == probe => {
+                oslab_hal::putchar::puts("[oslab-rs] kvm  : 地址翻译自检 ");
+                console::print_hex(probe);
+                oslab_hal::putchar::puts(" -> ");
+                console::print_hex(pa);
+                oslab_hal::putchar::puts(" (恒等映射, 正确)\n");
+            }
+            Some(pa) => {
+                oslab_hal::putchar::puts("[oslab-rs] kvm  : 地址翻译自检失败 ");
+                console::print_hex(probe);
+                oslab_hal::putchar::puts(" -> ");
+                console::print_hex(pa);
+                oslab_hal::putchar::puts(" (期望恒等映射)\n");
+            }
+            None => {
+                oslab_hal::putchar::puts("[oslab-rs] kvm  : 地址翻译自检失败 (没有映射)\n");
+            }
+        }
+    }
+
+    // ---- 进程与调度 ----
+    // 放在分页之后: 进程需要内核栈 (来自物理页分配器) 与页表; 顺序反了
+    // 症状是"进程一创建就缺页"。属于 lab-4 (进程表与调度器是创建进程前提)。
 
 
-
-
+    // ---- 启动其他 hart ----
+    // 用 SBI HSM。必须检查返回值: 在不存在的 hart 上调用会返回错误, 忽略则
+    // "某个核永远起不来"且无日志。
+    if arch::cpu::is_boot_hart() {
+        // 传入从核入口地址。hal 不能依赖 kernel (方向相反), 所以此地提供。
+        let started = arch::smp::start_others(arch::SECONDARY_ENTRY as *const () as usize);
+        oslab_hal::putchar::puts("[oslab-rs] smp: requested ");
+        console::print_dec(arch::cpu::platform().ncpu - 1);
+        oslab_hal::putchar::puts(" secondary hart(s), ");
+        console::print_dec(started);
+        oslab_hal::putchar::puts(" accepted by firmware, ");
+        console::print_dec(arch::smp::count_online_harts());
+        oslab_hal::putchar::puts(" now online\n");
+    }
 
     // ---- 阶段 8: 配置本 hart 的中断 ----
     // 放最后: 打开总开关后任何使能的中断都可能立刻来, 而处理函数必须已就绪。
