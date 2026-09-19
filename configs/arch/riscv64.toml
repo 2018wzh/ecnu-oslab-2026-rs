@@ -1,0 +1,40 @@
+# ============================================================================
+# 架构描述: riscv64
+# ----------------------------------------------------------------------------
+# 架构相关的配置只在此定义 (单点), 构建脚本、用户程序构建、镜像生成、
+# 运行脚本都从这里取。target 是 rustc 的三元组; fit_arch 是 U-Boot 的
+# arch 属性; ld_arch 是 binutils 的机器名, 彼此不同义。
+# ============================================================================
+
+name = "riscv64"
+
+# 目标三元组 (rustc --target)。
+target = "riscv64gc-unknown-none-elf"
+
+# U-Boot FIT 镜像里的 arch 属性。U-Boot 的 bootm 会校验它,
+# 不匹配就拒绝加载 —— 所以它是架构事实, 不是构建脚本里的常量。
+fit_arch = "riscv"
+
+# QEMU 的系统模拟器与 GDB 的架构名 (调试提示用)。
+qemu_system = "qemu-system-riscv64"
+# 专用交叉 gdb 的可执行名; 留空表示用发行版自带的 gdb-multiarch (推荐,
+# 不需要交叉工具链)。rustup 的 llvm-tools 不含 gdb。
+gdb = ""
+gdb_arch = "riscv:rv64"
+
+# 页大小: 链接脚本里的对齐粒度, 也是内核/用户态地址空间的对齐单位。
+page_size = 4096
+
+# 内核入口符号 (链接脚本的 ENTRY 与镜像入口点)。
+entry_symbol = "_entry"
+
+# 链接器的机器名 (OUTPUT_ARCH 的参数)。
+# 注意它不是三元组里的 riscv64: 那是 rustc 的词汇, 这是 binutils 的词汇。
+ld_arch = "riscv"
+
+# 用户程序的链接基址 (内核的装入器从 0x1000 开始按字节装入)。
+user_base = 0x1000
+
+# 用户程序的链接脚本模板 (相对仓库根)。
+# 与内核的 linker 同理: 用哪一份模板由**架构**决定。
+user_linker = "user/arch/riscv64/user.ld.in"

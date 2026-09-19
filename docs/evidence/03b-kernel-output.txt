@@ -1,0 +1,31 @@
+[oslab-rs] kernel entry reached (SBI console)
+
+========================================================
+  ECNU OSLab 2026  (Rust)
+========================================================
+  config      : riscv64-qemu-virt
+  platform    : qemu-virt
+  arch/boot   : riscv64 / sbi
+--------------------------------------------------------
+  DRAM base   : 0x80000000  size 128 MiB
+  kernel base : 0x80200000  (config says 0x80200000)
+  firmware    : 0x80000000 .. 0x80200000
+  cpus        : 2  hart range [0..1]  boot hart 0
+  uart0       : 0x10000000  irq 10  clock 3686400 Hz
+  plic        : 0xc000000
+  block       : virtio-mmio @ 0x10001000  irq 1  slots 8
+  timer       : interval 1000000 ticks, source clint (read) + sbi (set)
+--------------------------------------------------------
+  this hart   : hartid 0  cpuid 0  (boot hart)
+  sbi version : 3.0
+========================================================
+
+[oslab-rs] uart16550 ready @ 0x10000000 divisor=2 irq=10
+[oslab-rs] hart 1 (cpu 1) online, sp=0x80208fd0
+[oslab-rs] smp: requested 1 secondary hart(s), 1 accepted by firmware, 2 now online
+
+[oslab-rs] boot complete. entering idle loop.
+(Ctrl-A 然后 X 退出 QEMU)
+
+
+QEMU 已被 --timeout 终止

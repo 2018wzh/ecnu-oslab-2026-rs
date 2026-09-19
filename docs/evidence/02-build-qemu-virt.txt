@@ -1,0 +1,16 @@
+==> 构建内核
+    配置        : riscv64-qemu-virt
+    arch        : riscv64
+    platform    : qemu-virt
+    boot        : sbi
+    target      : riscv64gc-unknown-none-elf
+    链接地址    : 0x80200000
+    feature     : platform-qemu-virt
+
+warning: oslab-kernel@0.1.0: oslab-kernel: 使用配置 /home/wzh/oslab/ecnu-oslab-2026-rs/configs/riscv64-qemu-virt.toml
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.00s
+    [ok] _entry = 0x80200000 (与配置一致)
+
+==> 构建完成
+    ELF      : /home/wzh/oslab/ecnu-oslab-2026-rs/target/riscv64-qemu-virt/kernel.elf
+    大小     : 379432 字节

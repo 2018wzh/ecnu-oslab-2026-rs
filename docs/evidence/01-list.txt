@@ -1,0 +1,6 @@
+可用配置 (configs/*.toml):
+
+  riscv64-qemu-virt            arch=riscv64  platform=qemu-virt      boot=sbi
+  riscv64-visionfive2          arch=riscv64  platform=visionfive2    boot=uboot
+
+用 `cargo xtask list --verbose` 查看每个配置的详细信息。

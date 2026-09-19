@@ -1,0 +1,16 @@
+==> 构建内核
+    配置        : riscv64-visionfive2
+    arch        : riscv64
+    platform    : visionfive2
+    boot        : uboot
+    target      : riscv64gc-unknown-none-elf
+    链接地址    : 0x40200000
+    feature     : platform-visionfive2
+
+warning: oslab-kernel@0.1.0: oslab-kernel: 使用配置 /home/wzh/oslab/ecnu-oslab-2026-rs/configs/riscv64-visionfive2.toml
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.01s
+    [ok] _entry = 0x40200000 (与配置一致)
+
+==> 构建完成
+    ELF      : /home/wzh/oslab/ecnu-oslab-2026-rs/target/riscv64-visionfive2/kernel.elf
+    大小     : 371160 字节

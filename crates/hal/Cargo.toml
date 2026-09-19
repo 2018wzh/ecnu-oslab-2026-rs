@@ -1,0 +1,44 @@
+[package]
+name = "oslab-hal"
+description = "ECNU OSLab 2026: arch facade (riscv64) + platform constants"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+# 无。见 lib.rs: 目标侧 crate 的依赖数必须是 0。
+# 特别注意: hal **不依赖** drivers。依赖方向是 drivers -> hal,
+# 因为驱动需要 platform 常量才能知道设备在哪。
+# 反过来 (hal 依赖 drivers) 会形成环, 并且让"arch 层知道 PLIC 的存在"
+# 这种层次倒置重新出现 —— 那正是 C 版本里 drivers/irqchip/plic.c
+# 需要 #include <asm/csr.h> 却没人在意的问题。
+
+[features]
+# ---- 两个正交的选择维度: ISA 与机器 ----
+#
+# 它们对应 configs/*.toml 里的 arch 与 platform 两个字段, 也对应
+# 目录结构里的两个位置:
+#
+#     arch-<arch>          -> crates/hal/src/arch/<arch>/
+#     platform-<platform>  -> crates/hal/src/platform/<platform>.rs
+#
+# 【为什么架构也用 feature, 而不是 #[cfg(target_arch = "riscv64")]】
+#
+# 用 target_arch 也能工作 (它跟着 --target 三元组走, 而三元组来自配置),
+# 但它有一个实际的坏处: **"选了哪个架构"这件事在配置里没有对应的开关**。
+# 学生新增一个架构时, 必须去改 arch/mod.rs 里的 cfg 分支和那句
+# compile_error!, 也就是**改框架代码**; 而新增平台时只需要加一个
+# feature 和一个文件, 框架代码一行不动。
+#
+# 两个维度用同一套机制之后, "加一个架构"和"加一台机器"的步骤就一致了:
+#   加 arch:     新建 src/arch/<arch>/, 加一个 arch-<arch> feature,
+#                在 configs/ 里新增 .toml 把 arch 指过去
+#   加 platform: 新建 src/platform/<name>.rs, 加一个 platform-<name> feature,
+#                在 configs/ 里新增 .toml 把 platform 指过去
+#
+# 也就是说: 框架的**每一处扩展点都只通过配置和一个新文件完成**。
+default = []
+arch-riscv64 = []
+platform-qemu-virt = []
+platform-visionfive2 = []

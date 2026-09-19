@@ -1,0 +1,53 @@
+$ dtc -I dtb -O dts target/riscv64-visionfive2/kernel.itb
+/dts-v1/;
+
+/ {
+	description = "ECNU OSLab 2026 (Rust) - riscv64-visionfive2";
+	#address-cells = <0x01>;
+	#size-cells = <0x00>;
+
+	images {
+
+		kernel {
+			description = "OSLab kernel (raw binary)";
+			data-size = <0x6498>;
+			data-offset = <0x2b0>;
+			data-position = <0x2b0>;
+			type = "kernel";
+			arch = "riscv";
+			os = "linux";
+			compression = "none";
+			load = "@ ", "";
+			entry = "@ ", "";
+		};
+	};
+
+	configurations {
+		default = "conf-1";
+
+		conf-1 {
+			description = "ECNU OSLab 2026 (Rust) - riscv64-visionfive2";
+			kernel = "kernel";
+		};
+	};
+};
+dtc exit code: 0
+
+################ fdtget (libfdt, U-Boot 内部用的库) 按数字读取 ################
+
+dtc 把 load/entry 显示成 "@ ", "" 是它的**显示启发式**, 不是镜像的问题:
+0x40200000 的大端字节是 40 20 00 00 = '@', ' ', NUL, NUL。
+FDT 的属性没有类型 —— 类型知识在读它的驱动手里。
+
+$ fdtget -t x kernel.itb /images/kernel load           -> 40200000
+$ fdtget -t x kernel.itb /images/kernel entry          -> 40200000
+$ fdtget -t x kernel.itb /images/kernel data-size      -> 6498
+$ fdtget -t x kernel.itb /images/kernel data-offset    -> 2b0
+$ fdtget -t x kernel.itb /images/kernel data-position  -> 2b0
+
+$ fdtget -t s kernel.itb /images/kernel type           -> kernel
+$ fdtget -t s kernel.itb /images/kernel arch           -> riscv
+$ fdtget -t s kernel.itb /images/kernel os             -> linux
+$ fdtget -t s kernel.itb /images/kernel compression    -> none
+$ fdtget -t s kernel.itb /configurations default          -> conf-1
+$ fdtget -t s kernel.itb /configurations/conf-1 kernel    -> kernel

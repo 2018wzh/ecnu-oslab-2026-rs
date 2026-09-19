@@ -1,0 +1,11 @@
+[package]
+name = "oslab-uapi"
+description = "ECNU OSLab 2026: syscall ABI shared by kernel and user programs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+# 无。uapi 必须是"零依赖"的: 它会被用户程序 (U-mode) 和内核 (S-mode)
+# 同时编译, 任何依赖都会同时污染两边。

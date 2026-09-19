@@ -1,0 +1,9 @@
+# 所有构建产物统一放在 target/ 下 (cargo 默认, xtask 的额外产物也放这里)
+/target/
+# 运行时临时文件
+*.log
+*.pid
+# 编辑器
+.vscode/
+.idea/
+*.swp

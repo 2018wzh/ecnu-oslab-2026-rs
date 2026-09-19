@@ -1,0 +1,95 @@
+# ============================================================================
+# ECNU OSLab 2026 (Rust) -- workspace
+# ----------------------------------------------------------------------------
+# 整个仓库是一个 cargo workspace。三个"目标侧" crate
+#   (uapi / hal / drivers / kernel) 与一个"宿主侧" crate (xtask) 共存,
+# 但它们编译给完全不同的机器:
+#
+#   目标侧: riscv64gc-unknown-none-elf, no_std, 无任何外部依赖
+#   宿主侧: x86_64-unknown-linux-gnu, 就是普通 std 程序 (构建工具)
+#
+# 这一点必须显式声明: 如果让 xtask 参与 workspace 的默认 feature 解析,
+# 它会和 no_std 内核共享 [workspace.dependencies] 之类的配置, 造成混乱。
+# 用 `default-members` 把两者分开。
+#
+# 设计约束 (贯穿全仓库): 目标侧 crate 的依赖数必须是 0。
+# 这不是"为了显得纯粹", 而是因为:
+#   1. 内核在裸机上运行, 没有 crates.io, 没有网络, 依赖必须 vendored;
+#   2. 教学仓库里任何一行第三方代码都是学生必须额外理解的负担;
+#   3. 依赖越少, 构建越可复现。
+# ============================================================================
+[workspace]
+resolver = "2"
+members = [
+    "crates/uapi",
+    "crates/hal",
+    "crates/drivers",
+    "crates/kernel",
+    "xtask",
+]
+default-members = [
+    "crates/uapi",
+    "crates/hal",
+    "crates/drivers",
+    "crates/kernel",
+]
+
+[workspace.package]
+version = "0.1.0"
+# Rust 2024 edition。
+#
+# ## 为什么用最新 edition 而不是 2021
+#
+# 因为教学仓库应当示范"今天写 Rust 的样子"。2024 edition 带来的几条
+# 变化恰好与本仓库相关:
+#   * `unsafe_op_in_unsafe_fn` 默认报错 —— 本仓库有大量 `unsafe fn`
+#     (`pmem_alloc`/`map`/`trap_return`...), 强制在函数体内显式写
+#     `unsafe {}` 让"哪一步真的需要 unsafe"变得可见, 而不是整个函数
+#     体默认都在 unsafe 里;
+#   * `static mut` 的引用默认报错 —— 迫使改用 `addr_of_mut!`, 这正好
+#     是本仓库已经在用的写法 (见 `fs::mount` 的 BCACHE);
+#   * RPIT 生命周期捕获规则收紧、`gen` 成为关键字等。
+#
+# 如果学生用旧编译器遇到报错, 那是一个明确的信号 (rust-version 会
+# 直接拦住), 而不是一个运行期才暴露的隐蔽差异。
+edition = "2024"
+# 2024 edition 需要 Rust 1.85 以上。
+rust-version = "1.85"
+license = "MIT"
+authors = ["ECNU OSLab 2026"]
+
+[workspace.dependencies]
+# 内部 crate 之间互相引用。注意 hal 与 drivers 之间【没有】依赖边,
+# 这个缺失是刻意的, 见 docs/architecture.md 的"依赖方向"一节。
+oslab-uapi = { path = "crates/uapi" }
+oslab-hal = { path = "crates/hal" }
+oslab-drivers = { path = "crates/drivers" }
+oslab-kernel = { path = "crates/kernel" }
+
+# ---------------------------------------------------------------------------
+# 构建 profile
+# ---------------------------------------------------------------------------
+# 内核的 release profile 关掉一切"方便调试器/崩溃回溯"的东西:
+#   panic=abort   : 裸机上没有栈展开运行时, unwind 会链接失败
+#   debug=true    : 保留 DWARF 调试信息 (体积无所谓, 学生要用 gdb 单步)
+#   lto=true      : 跨 crate 内联。内核里大量 "#[inline]" 的寄存器访问函数
+#                   如果不做 LTO 就会变成真实的函数调用, 白白多花几十个 cycle
+#   opt-level=2   : 不用 3, 因为 3 会做更激进的向量化/展开, 反汇编更难读
+[profile.release]
+opt-level = 2
+debug = true
+lto = true
+codegen-units = 1
+panic = "abort"
+# 【只保留一个运行期检查: 整数溢出】
+# 溢出的后果是静默的错误结果 (缓冲区下标算错、地址算错), 在裸机上
+# 表现为"随机崩溃", 而它本身几乎不要钱 —— 保留。
+overflow-checks = true
+# 【debug_assert! 在 release 里关掉】
+# 本仓库的 160 处 assert 家族里有 151 处是**编译期**自检
+# (`const _: () = { assert!(...) }`, 例如结构体大小与字段偏移),
+# 它们不产生任何运行期代码 —— 这里关掉的是剩下那几个真正的
+# `debug_assert!` (内存分配器的页对齐、页表下标范围)。
+# 那些检查在 debug 构建里仍然生效, 而 release 镜像里不再为
+# "只有开发期才有意义的不变式" 付出每页一次的分支代价。
+debug-assertions = false

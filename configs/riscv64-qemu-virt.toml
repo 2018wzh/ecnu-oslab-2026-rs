@@ -1,0 +1,83 @@
+# ============================================================================
+# 平台选择: 一个 .toml 描述一台机器
+# ----------------------------------------------------------------------------
+# 【为什么是 TOML 而不是 .mk / .h】
+#   xtask 是 Rust 程序。让它去"source 一个 Makefile"意味着要拉进一个
+#   shell, 而 shell 在不同机器上的行为差异 (bash vs dash, coreutils 版本)
+#   正是教学仓库最不该有的不确定性。TOML 用 20 行 Rust 就能解析,
+#   而且格式错误会给出精确到行列的报错。
+#
+# 【为什么这里只放"地址与拓扑", 不放进 configs/*.toml】
+#   等等, 这个文件本身就是 configs/*.toml。要点在于本文件与
+#   crates/hal/src/platform/qemu_virt.rs **不重复**:
+#
+#     configs/*.toml   -> 构建期需要的信息: 目标三元组, 链接地址,
+#                         产物格式, QEMU 命令行。是 **构建系统的输入**。
+#     platform/*.rs    -> 运行期代码需要的信息: UART/PLIC 基地址, 中断号,
+#                         时钟频率, hart 区间。是 **内核代码的输入**。
+#
+#   两者都涉及"内存基地址"这类数值, 看起来有重复。为什么不合并成一
+#   个来源? 因为它们的**消费者不同**: 即使没有 xtask (例如学生直接用
+#   cargo 手工构建), 内核也必须知道 UART 在哪; 反过来, 即使内核代码
+#   还没写出来, xtask 也必须知道该把 FIT 的 load 地址填成多少。
+#   它们恰好取值相同, 但生命周期完全独立。
+#
+#   为了防止它们在长期演进中漂移, 两处数值的一致性由**编译期**
+#   检查守着 (见 crates/hal/src/platform/*.rs 里的 static_assert 与
+#   crates/kernel/build.rs 生成的 platform_facts), 于是"不一致"在
+#   构建时就变成一条明确的错误, 而不是等到某个绝对地址访问出错。
+# ============================================================================
+
+# ---- 身份 ------------------------------------------------------------------
+# 名字用于 --config <name> 查找, 也是构建产物目录名。
+# 命名规则: <arch>-<machine>-<loader>, 三个维度显式写出来, 学生一眼
+# 就能看出"换的是哪一维"。
+name = "riscv64-qemu-virt"
+description = "QEMU virt + OpenSBI (-bios default), 2 CPUS running in S-mode"
+
+# ---- 三个正交的构建维度 ----------------------------------------------------
+# 它们对应目录结构里的三个位置, 不是三个碰巧写在一起的字符串:
+#   arch     -> crates/hal/src/arch/<arch>/        (CPU/ISA 语义)
+#   platform -> crates/hal/src/platform/<platform>.rs (机器语义)
+#   boot     -> 链接地址与交付格式                  (启动路径语义)
+arch = "riscv64"
+platform = "qemu-virt"
+boot = "sbi"
+
+# 链接脚本模板 (相对仓库根)。
+#
+# 【为什么链接脚本由配置指定, 而不是写死在构建脚本里】
+# 因为"内核在文件里的段布局"是**启动协议**决定的:
+#   S-mode 固件启动  固件把内核放到固定物理地址然后跳过去, 脚本只要
+#                    声明入口与段顺序 (本文件当前用的就是这种)。
+#   multiboot        文件头 8 KiB 内必须有可被 4 字节对齐找到的
+#                    multiboot header 段 —— 段布局完全不同。
+#   UEFI             产物是 PE/COFF, 节对齐与命名有额外要求。
+#   limine           需要 limine requests 段, 且对段顺序敏感。
+# 写死路径的话, 加一个 bootloader 就得改构建脚本, 而构建脚本是三个
+# 维度共用的一份代码 —— 为某一维动它最容易伤到别的维度。
+linker = "crates/kernel/linker/smode.ld.in"
+
+# 目标三元组不在这里: 它是**架构**的事实, 见 configs/arch/<arch>.toml。
+#
+# ---- 链接地址 --------------------------------------------------------------
+# OpenSBI 固件占据 [0x80000000, 0x80200000), 运行完跳转到 0x80200000。
+# 这个值必须与 crates/hal/src/platform/qemu_virt.rs 的 KERNEL_BASE 一致。
+# build.rs 会把它注入生成的链接脚本 (见 crates/kernel/build.rs),
+# 并且在链接后再次用 nm 校验 _entry 真的落在它上面 —— 这是 C 版本里
+# "链接地址和加载地址对不上, 症状是静默跑飞" 那类 bug 的根治办法。
+kernel_load_addr = 0x80200000
+
+# ---- 运行参数 --------------------------------------------------------------
+[qemu]
+machine = "virt"
+cpu = "rv64"
+smp = 2              # 必须与 platform/qemu_virt.rs 的 NCPU 一致
+memory = "128M"      # 必须与 platform/qemu_virt.rs 的 DRAM_SIZE 一致
+bios = "default"     # 使用 QEMU 自带的 OpenSBI
+display = "none"
+# 注意: 这里不写 -kernel。原因见 xtask/src/run.rs 的说明:
+#   -kernel 会走到 QEMU 的 "fw_dynamic" 路径, 由 QEMU 决定加载地址,
+#   而学生的实验常常需要精确控制加载地址与内存布局。改成
+#   -device loader,file=<elf> 更直白, 而且它同时打印加载地址,
+#   把"内核被放到哪里"这件事变成命令行上可见的事实。

@@ -1,0 +1,34 @@
+==> 构建内核
+    配置        : riscv64-visionfive2
+    arch        : riscv64
+    platform    : visionfive2
+    boot        : uboot
+    target      : riscv64gc-unknown-none-elf
+    链接地址    : 0x40200000
+    feature     : platform-visionfive2
+
+warning: oslab-kernel@0.1.0: oslab-kernel: 使用配置 /home/wzh/oslab/ecnu-oslab-2026-rs/configs/riscv64-visionfive2.toml
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.01s
+    [ok] _entry = 0x40200000 (与配置一致)
+
+==> 构建完成
+    ELF      : /home/wzh/oslab/ecnu-oslab-2026-rs/target/riscv64-visionfive2/kernel.elf
+    大小     : 371160 字节
+==> FIT 镜像
+    内核数据 : 25752 字节 (51 扇区)
+    结构块   : 480 字节
+    字符串块 : 150 字节
+    数据偏移 : 0x2b0
+    镜像总长 : 26440 字节
+    load     : 0x40200000
+    entry    : 0x40200000
+    [ok] FDT 自校验通过: 16 个属性, 内核数据落在 [0x2b0, 0x6748)
+         type=kernel arch=riscv os=linux load=0x40200000 entry=0x40200000
+    [ok] libfdt 交叉验证通过 (load=0x40200000 entry=0x40200000, 8 个属性)
+
+==> 开发板交付物已生成
+    FIT 镜像 : /home/wzh/oslab/ecnu-oslab-2026-rs/target/riscv64-visionfive2/kernel.itb
+    裸二进制 : /home/wzh/oslab/ecnu-oslab-2026-rs/target/riscv64-visionfive2/kernel.bin
+
+    部署步骤:
+    见 docs/board-deploy.md (Terra Term / minicom, 115200 8N1)

@@ -1,0 +1,52 @@
+# ============================================================================
+# cargo 配置 —— 让 `cargo xtask` 这个惯例在本仓库生效
+# ----------------------------------------------------------------------------
+# cargo 本身没有 "xtask" 子命令。这里用 alias 把 `cargo xtask` 映射到
+# "在本 workspace 里运行 xtask 这个二进制":
+#
+#   cargo xtask build --config riscv64-qemu-virt
+#     ↓
+#   cargo run --manifest-path xtask/Cargo.toml -- build --config riscv64-qemu-virt
+#
+# 为什么要加 `--quiet`: 否则每次都会打印 "Compiling xtask" 之类的
+# 构建噪音, 淹没内核自己的输出。xtask 只在源码变化时重新编译, 所以
+# 这个开销可以忽略。
+# ============================================================================
+[alias]
+xtask = "run --quiet --manifest-path xtask/Cargo.toml --"
+
+# ----------------------------------------------------------------------------
+# 目标平台的默认选项
+# ----------------------------------------------------------------------------
+# 内核是裸机二进制, 必须是静态重定位 (没有动态加载器)。
+# 注意这里**不**设置 target —— 那会改变默认行为, 让 host 侧的
+# `cargo test` (xtask 的单元测试) 也去构建 riscv64, 从而失败。
+# target 由 xtask 显式通过 --target 传递。
+# 【为什么这里不设置 rustflags】
+#
+# 一个非常隐蔽的坑, 值得记下来:
+#   `[target.<triple>] rustflags = [...]` 一旦设置, 就会**完全覆盖**
+#   cargo 从 target 的 JSON 规格里推导出来的默认 rustflags ——
+#   包括 `--target-feature=+m` 这样的 ISA 扩展开关。
+#
+#   于是 `mul` 指令会因为 "instruction requires Zmmul" 而编译失败,
+#   而错误信息指向的是汇编, 完全看不出原因是构建配置。
+#
+# 本仓库需要的编译选项都通过 Cargo.toml 的 profile 表达
+# (见 [profile.release] 的 panic = "abort" 等), 不需要在这里
+# 额外传 rustflags。
+
+[net]
+# 本仓库没有任何外部依赖, 永远不需要访问网络。
+# 显式关掉能避免 cargo 在离线环境里做多余的索引刷新 (会卡住几十秒)。
+offline = true
+
+# ----------------------------------------------------------------------------
+# 目标平台的链接器
+# ----------------------------------------------------------------------------
+# 本仓库**不依赖系统安装的交叉工具链** (`riscv64-elf-*`)。链接器用
+# rustup 工具链自带的 `rust-lld`。它由 `toolchain` 模块 (xtask/src/toolchain.rs)
+# 把 rustup 工具目录注入 PATH 后解析到 —— 在干净的机器上只要装了 rustup
+# (目标 `riscv64gc-unknown-none-elf` + `llvm-tools` 组件) 就能构建。
+[target.riscv64gc-unknown-none-elf]
+linker = "rust-lld"

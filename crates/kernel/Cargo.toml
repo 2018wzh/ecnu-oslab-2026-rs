@@ -1,0 +1,58 @@
+[package]
+name = "oslab-kernel"
+description = "ECNU OSLab 2026: portable teaching kernel (OS semantics only)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+# 说明: 这是一个 **bin crate**, 不是 lib。
+#   lib 会在 target/ 里留下 liboslab_kernel.rlib, 而它对链接一个裸机
+#   内核毫无用处 —— 只会让产物目录更难读。bin crate 直接产出可执行文件,
+#   这正是我们最终要 objcopy 成 .bin / 塞进 FIT 的东西。
+build = "build.rs"
+
+[dependencies]
+# kernel 依赖 hal (arch facade + platform 常量) 与 uapi (系统调用号)。
+#
+# 【关键: 这里没有 oslab-drivers】
+#   kernel 不应该直接依赖驱动实现。它只依赖 drivers 暴露的 **trait**
+#   (例如 block::BlockDevice), 而 trait 定义在 drivers crate 里……
+#   等等, 这不就形成依赖了吗?
+#
+#   解决方案见 crates/drivers/src/block/mod.rs 的说明: drivers crate
+#   只提供"设备协议" (trait + 具体实现), 而 **平台决定链接哪一个实现**,
+#   通过 feature gate 完成。kernel 依赖 drivers 只是为了拿到 trait 定义,
+#   这仍然是单向依赖: kernel -> drivers -> (无) 。
+#   drivers 不知道 kernel 的存在, 所以把驱动搬到另一个内核里仍然可用。
+oslab-hal.workspace = true
+oslab-drivers.workspace = true
+oslab-uapi.workspace = true
+
+# ---------------------------------------------------------------------------
+# feature: 平台选择
+# ---------------------------------------------------------------------------
+# 这就是"platform 可配置"的落地点。xtask 读到 configs/*.toml 后,
+# 把 --features platform-qemu-virt 或 --features platform-visionfive2
+# 传给 cargo。两个 feature 互斥 (由 build.rs 强制检查)。
+#
+# 为什么平台用 feature 而 arch 不用 trait:
+#   同一时刻只会链接 **一个** 平台、**一个** 架构, 它们是编译期唯一的。
+#   用 dyn trait 表达"唯一的编译期选择"会引入虚调用开销和对象安全问题,
+#   却换不来任何灵活性。反过来, 块设备在同一台机器上**可能有两个**
+#   (virtio-blk 与 sdhci 同时存在), 所以那里必须用 trait。
+#   "编译期唯一 -> 泛型/feature; 运行期多个 -> dyn trait" 是本仓库
+#   最重要的风格规则之一。
+[features]
+default = []
+# 两个维度都要往下传: 架构由 hal 的 arch facade 用, 平台由 hal 的
+# platform 常量与 drivers 的平台相关驱动用。
+arch-riscv64 = ["oslab-hal/arch-riscv64", "oslab-drivers/arch-riscv64"]
+platform-qemu-virt = ["oslab-hal/platform-qemu-virt", "oslab-drivers/platform-qemu-virt"]
+platform-visionfive2 = ["oslab-hal/platform-visionfive2", "oslab-drivers/platform-visionfive2"]
+
+# 让 `cargo test` / `cargo check` 在内核 crate 上不再报 "no_std 但
+# 用了测试框架" 之类的噪音: 本 crate 的单元测试全部在宿主上跑不了
+# (没有 panic handler 之外的运行时), 所以显式声明没有测试目标。
+[[bin]]
+name = "oslab-kernel"
+path = "src/main.rs"

@@ -1,0 +1,26 @@
+[package]
+name = "oslab-drivers"
+description = "ECNU OSLab 2026: device protocol drivers (16550 UART, SiFive PLIC, virtio-blk, DW MSHC)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+# drivers 依赖 hal —— 方向是 drivers -> hal, 反过来不行。
+# 驱动需要知道设备在哪 (platform 常量) 和怎么和 CPU 打交道 (arch facade),
+# 而 hal 完全不知道驱动的存在。
+#
+# 【为什么 hal 不依赖 drivers】
+# 如果 hal 依赖 drivers, 那么 hal 就必须知道 PLIC、UART 的存在 ——
+# 那是层次倒置。C 版本里 drivers/irqchip/plic.c 直接 #include <asm/csr.h>
+# 就是一个例子: 驱动越过了它该待的层次。本仓库里驱动只能通过
+# `oslab_hal::arch::*` 的语义化接口与 CPU 打交道, 不能直接碰 CSR。
+oslab-hal.workspace = true
+oslab-uapi.workspace = true
+
+[features]
+default = []
+arch-riscv64 = ["oslab-hal/arch-riscv64"]
+platform-qemu-virt = ["oslab-hal/platform-qemu-virt"]
+platform-visionfive2 = ["oslab-hal/platform-visionfive2"]

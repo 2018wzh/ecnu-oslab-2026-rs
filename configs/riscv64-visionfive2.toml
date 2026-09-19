@@ -1,0 +1,54 @@
+# ============================================================================
+# 平台选择: VisionFive2 (昉·星光2, SoC: StarFive JH7110)
+# ----------------------------------------------------------------------------
+# 【请把这个文件与 riscv64-qemu-virt.toml 并排阅读】
+# 结构完全一样, 只有 boot 维度、链接地址和运行参数不同。
+# 这正是抽象是否成功的检验:
+#
+#   arch     = riscv64     (不变 —— 同一套 CPU/ISA 语义)
+#   platform = visionfive2 (变 —— 机器上的设备换了位置)
+#   boot     = uboot       (变 —— 交付格式从"直接跑 ELF"变成 FIT)
+#
+# 如果移植到这块板子时需要去改 kernel/ 里的任何一行, 说明边界划错了。
+# ============================================================================
+
+name = "riscv64-visionfive2"
+description = "VisionFive2 / StarFive JH7110, U-Boot FIT image, harts 1..4"
+
+arch = "riscv64"
+platform = "visionfive2"
+boot = "uboot"
+
+# 链接脚本模板 (相对仓库根)。
+#
+# 【为什么链接脚本由配置指定, 而不是写死在构建脚本里】
+# 因为"内核在文件里的段布局"是**启动协议**决定的:
+#   S-mode 固件启动  固件把内核放到固定物理地址然后跳过去, 脚本只要
+#                    声明入口与段顺序 (本文件当前用的就是这种)。
+#   multiboot        文件头 8 KiB 内必须有可被 4 字节对齐找到的
+#                    multiboot header 段 —— 段布局完全不同。
+#   UEFI             产物是 PE/COFF, 节对齐与命名有额外要求。
+#   limine           需要 limine requests 段, 且对段顺序敏感。
+# 写死路径的话, 加一个 bootloader 就得改构建脚本, 而构建脚本是三个
+# 维度共用的一份代码 —— 为某一维动它最容易伤到别的维度。
+linker = "crates/kernel/linker/smode.ld.in"
+
+# 目标三元组不在这里: 它是**架构**的事实, 见 configs/arch/<arch>.toml。
+#
+# ---- 链接地址 --------------------------------------------------------------
+# JH7110 上 OpenSBI 位于 0x40000000, 运行完跳转到 0x40200000 (S-mode)。
+# 注意这与 QEMU 的 0x80200000 完全不同 —— 但 kernel/ 里的代码
+# 一个数字都不需要改, 因为地址只出现在这里和 platform/*.rs 里。
+kernel_load_addr = 0x40200000
+
+# ---- 运行参数 --------------------------------------------------------------
+# 开发板不能由 xtask 启动。这里记录的是"部署参数", 供 xtask image
+# 生成 FIT 时填进 load/entry 属性, 以及打印给学生的 U-Boot 命令。
+[uboot]
+load_addr = 0x40200000
+entry_addr = 0x40200000
+# U-Boot 的 bootm 会解析 FIT, 校验 arch, 把数据搬到 load 地址, 跳 entry。
+# 用 bootm 而不是裸 go 的理由: go 不做任何校验, 地址写错就静默跑飞。
+boot_command = "bootm ${kernel_addr_r}"
+# 交付命令 (写进 docs/board-deploy.md 的同一份内容)
+deploy_hint = "见 docs/board-deploy.md (Terra Term / minicom, 115200 8N1)"

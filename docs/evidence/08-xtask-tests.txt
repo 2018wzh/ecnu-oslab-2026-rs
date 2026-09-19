@@ -1,0 +1,20 @@
+   Compiling xtask v0.1.0 (/home/wzh/oslab/ecnu-oslab-2026-rs/xtask)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.26s
+     Running unittests src/main.rs (target/debug/deps/xtask-435b892000f7ce73)
+
+running 12 tests
+test architecture_rules::tests::catches_csr_in_code_but_not_in_comments ... ok
+test architecture_rules::tests::strips_block_comments_across_lines ... ok
+test config::tests::missing_field_is_reported ... ok
+test config::tests::parse_int_supports_hex_and_underscores ... ok
+test architecture_rules::tests::strips_line_comments ... ok
+test build::tests::shell_quoting ... ok
+test config::tests::duplicate_key_is_reported ... ok
+test config::tests::parses_minimal_config ... ok
+test config::tests::parses_sections_and_ignores_comments ... ok
+test architecture_rules::tests::current_kernel_passes_all_rules ... ok
+test fit::tests::aligns_data_to_four_bytes ... ok
+test fit::tests::generates_parseable_fit ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.15s
+

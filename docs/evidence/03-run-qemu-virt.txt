@@ -1,0 +1,131 @@
+==> 构建内核
+    配置        : riscv64-qemu-virt
+    arch        : riscv64
+    platform    : qemu-virt
+    boot        : sbi
+    target      : riscv64gc-unknown-none-elf
+    链接地址    : 0x80200000
+    feature     : platform-qemu-virt
+
+warning: oslab-kernel@0.1.0: oslab-kernel: 使用配置 /home/wzh/oslab/ecnu-oslab-2026-rs/configs/riscv64-qemu-virt.toml
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.00s
+    [ok] _entry = 0x80200000 (与配置一致)
+
+==> 构建完成
+    ELF      : /home/wzh/oslab/ecnu-oslab-2026-rs/target/riscv64-qemu-virt/kernel.elf
+    大小     : 379432 字节
+
+============================================================
+  启动 QEMU
+============================================================
+  内核     : /home/wzh/oslab/ecnu-oslab-2026-rs/target/riscv64-qemu-virt/kernel.elf
+  加载地址 : 0x80200000
+  CPU 数   : 2
+  内存     : 128M
+  固件     : -bios default (QEMU 自带的 OpenSBI)
+
+  【退出 QEMU】先按 Ctrl-A, 再按 X
+  (Ctrl-C 会被转发给 guest, 不会退出 QEMU)
+============================================================
+
+  等效命令:
+    qemu-system-riscv64 -machine virt -cpu rv64 -m 128M -smp 2 -bios default -kernel /home/wzh/oslab/ecnu-oslab-2026-rs/target/riscv64-qemu-virt/kernel.elf -nographic -no-reboot
+
+  【脚本模式】8 秒后自动终止 QEMU (--timeout 8)
+
+
+OpenSBI v1.8.1
+   ____                    _____ ____ _____
+  / __ \                  / ____|  _ \_   _|
+ | |  | |_ __   ___ _ __ | (___ | |_) || |
+ | |  | | '_ \ / _ \ '_ \ \___ \|  _ < | |
+ | |__| | |_) |  __/ | | |____) | |_) || |_
+  \____/| .__/ \___|_| |_|_____/|____/_____|
+        | |
+        |_|
+
+Platform Name               : riscv-virtio,qemu
+Platform Features           : medeleg
+Platform HART Count         : 2
+Platform HART Protection    : pmp
+Platform IPI Device         : aclint-mswi
+Platform Timer Device       : aclint-mtimer @ 10000000Hz
+Platform Console Device     : uart8250
+Platform HSM Device         : ---
+Platform PMU Device         : ---
+Platform Reboot Device      : syscon-reboot
+Platform Shutdown Device    : syscon-poweroff
+Platform Suspend Device     : ---
+Platform CPPC Device        : ---
+Firmware Base               : 0x80000000
+Firmware Size               : 333 KB
+Firmware RW Offset          : 0x40000
+Firmware RW Size            : 77 KB
+Firmware Heap Offset        : 0x49000
+Firmware Heap Size          : 41 KB (total), 0 KB (reserved), 12 KB (used), 27 KB (free)
+Firmware Scratch Size       : 4096 B (total), 1464 B (used), 2632 B (free)
+Runtime SBI Version         : 3.0
+Standard SBI Extensions     : time,rfnc,ipi,base,hsm,srst,pmu,dbcn,fwft,legacy,dbtr,sse
+Experimental SBI Extensions : none
+
+Domain0 Name                : root
+Domain0 Boot HART           : 0
+Domain0 HARTs               : 0*,1*
+Domain0 Region00            : 0x0000000080040000-0x000000008005ffff M: (F,R,W) S/U: ()
+Domain0 Region01            : 0x0000000080000000-0x000000008003ffff M: (F,R,X) S/U: ()
+Domain0 Region02            : 0x0000000000100000-0x0000000000100fff M: (I,R,W) S/U: (R,W)
+Domain0 Region03            : 0x0000000010000000-0x0000000010000fff M: (I,R,W) S/U: (R,W)
+Domain0 Region04            : 0x0000000002000000-0x000000000200ffff M: (I,R,W) S/U: ()
+Domain0 Region05            : 0x000000000c400000-0x000000000c5fffff M: (I,R,W) S/U: (R,W)
+Domain0 Region06            : 0x000000000c000000-0x000000000c3fffff M: (I,R,W) S/U: (R,W)
+Domain0 Region07            : 0x0000000000000000-0xffffffffffffffff M: () S/U: (R,W,X)
+Domain0 Next Address        : 0x0000000080200000
+Domain0 Next Arg1           : 0x0000000087e00000
+Domain0 Next Mode           : S-mode
+Domain0 SysReset            : yes
+Domain0 SysSuspend          : yes
+
+Boot HART ID                : 0
+Boot HART Domain            : root
+Boot HART Priv Version      : v1.12
+Boot HART Base ISA          : rv64imafdch
+Boot HART ISA Extensions    : sstc,zicntr,zihpm,zicboz,zicbom,sdtrig,svadu
+Boot HART PMP Count         : 16
+Boot HART PMP Granularity   : 2 bits
+Boot HART PMP Address Bits  : 54
+Boot HART MHPM Info         : 16 (0x0007fff8)
+Boot HART Debug Triggers    : 2 triggers
+Boot HART MIDELEG           : 0x0000000000001666
+Boot HART MEDELEG           : 0x0000000000f4b509
+
+[oslab-rs] kernel entry reached (SBI console)
+
+========================================================
+  ECNU OSLab 2026  (Rust)
+========================================================
+  config      : riscv64-qemu-virt
+  platform    : qemu-virt
+  arch/boot   : riscv64 / sbi
+--------------------------------------------------------
+  DRAM base   : 0x80000000  size 128 MiB
+  kernel base : 0x80200000  (config says 0x80200000)
+  firmware    : 0x80000000 .. 0x80200000
+  cpus        : 2  hart range [0..1]  boot hart 0
+  uart0       : 0x10000000  irq 10  clock 3686400 Hz
+  plic        : 0xc000000
+  block       : virtio-mmio @ 0x10001000  irq 1  slots 8
+  timer       : interval 1000000 ticks, source clint (read) + sbi (set)
+--------------------------------------------------------
+  this hart   : hartid 0  cpuid 0  (boot hart)
+  sbi version : 3.0
+========================================================
+
+[oslab-rs] uart16550 ready @ 0x10000000 divisor=2 irq=10
+[oslab-rs] hart 1 (cpu 1) online, sp=0x80208fd0
+[oslab-rs] smp: requested 1 secondary hart(s), 1 accepted by firmware, 2 now online
+
+[oslab-rs] boot complete. entering idle loop.
+(Ctrl-A 然后 X 退出 QEMU)
+
+
+QEMU 已被 --timeout 终止
