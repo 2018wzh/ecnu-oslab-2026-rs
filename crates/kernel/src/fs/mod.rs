@@ -7,3 +7,6 @@
 pub mod bio;
 pub mod adapter;
 pub mod bitmap;
+pub mod inode;
+pub mod mount;
+pub mod dir;

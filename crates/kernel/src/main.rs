@@ -429,6 +429,8 @@ fn block_selfcheck() {
             // ---- lab-8 自检: 挂载文件系统并列出根目录 ----
             // inode 读取与目录解析属于"做对了没输出、做错了只是后面某步莫名
             // 奇炒地坏掉"的工作, 所以单独验证这一层。
+            fs_selfcheck(dev);
+
         }
         Err(e) => {
             puts("[oslab-rs]   读块 0 失败: ");
@@ -453,6 +455,64 @@ fn block_selfcheck() {
 /// 读 ELF → 加载器按 program header 装 → 进 U-mode)。扁平改 ELF 非可有
 /// 可无: 扁平要求"文件偏移==虚拟地址偏移"(一条约定, 链接脚本稍有不慎就
 /// 破坏); ELF 把入口与每段位置显式写进文件, 不存在"约定被破坏"这种失败。
+///
+/// inode 读取与目录解析是"做对了没输出"的工作, 所以单独验证: 挂载 →
+/// 读根目录 inode → 用缓冲缓存读内容 (含间接块) → 逐个解释 dirent。一行
+/// `inum=N name` 同时证明后两步都对。
+fn fs_selfcheck(dev: &mut dyn oslab_drivers::block::BlockDevice) {
+    use oslab_hal::putchar::puts;
+
+    let mut fs = match crate::fs::mount::Fs::mount(dev) {
+        Ok(fs) => fs,
+        Err(e) => {
+            puts("[oslab-rs] fs   : 挂载失败 (");
+            puts(match e {
+                crate::fs::mount::MountError::Io => "读超级块失败",
+                crate::fs::mount::MountError::BadMagic => "魔数不对 (忘 mkfs?)",
+                crate::fs::mount::MountError::BadSuperblock => "超级块不自洽",
+                crate::fs::mount::MountError::BadRoot => "根目录不是目录",
+            });
+            puts(")\n");
+            return;
+        }
+    };
+
+    puts("[oslab-rs] fs   : 超级块 ");
+    console::print_dec(fs.sb.size as usize);
+    puts(" 块, ");
+    console::print_dec(fs.sb.ninodes as usize);
+    puts(" 个 inode\n");
+
+    // 目录内容是定长 dirent (2 字节 inode 号小端 + 14 字节名字, 不足补 0),
+    // 与 docs/abi-spec.md 和 xtask 的 mkfs 一致 —— 定长记录没有边界可算错。
+    let root = fs.read_inode(crate::fs::mount::ROOTINO);
+    let mut buf = [0u8; 4096];
+    let (n, complete) = fs.read_file(&root, &mut buf);
+    if !complete {
+        puts("[oslab-rs] fs   : 读根目录失败\n");
+        return;
+    }
+
+    puts("[oslab-rs] fs   : 根目录内容:\n");
+    let mut off = 0;
+    while off + 16 <= n {
+        let inum = u16::from_le_bytes([buf[off], buf[off + 1]]) as u32;
+        let name = &buf[off + 2..off + 16];
+        // inum==0 表示槽位为空 (文件被删过), 直接跳过。
+        if inum != 0 {
+            let end = name.iter().position(|&c| c == 0).unwrap_or(name.len());
+            puts("                inum=");
+            console::print_dec(inum as usize);
+            puts("  ");
+            for &c in &name[..end] {
+                oslab_hal::putchar::putc(c);
+            }
+            puts("\n");
+        }
+        off += 16;
+    }
+}
+
 /// 创建第一个用户进程, 然后把 CPU 交给用户态。
 ///
 /// 链路: proc_alloc (槽+内核栈+trapframe 位置) → set_current → 
