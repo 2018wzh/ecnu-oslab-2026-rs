@@ -70,6 +70,7 @@ pub struct Proc {
     ///
     /// fd 号是进程私有的命名空间: A 的 fd 3 与 B 的 fd 3 可指向不同
     /// 文件。全局化会让 fork 后子进程关 fd 连带关掉父进程的。
+    pub fds: crate::fs::file::FdTable,
     /// 本进程的页表根页号 (0 表示还没有地址空间)。
     ///
     /// 每进程一份, 让两个进程能在同一虚拟地址放各自代码 (fork 的前提)。
@@ -97,6 +98,7 @@ impl Proc {
             kstack_top: 0,
             exit_code: 0,
             parent: 0,
+            fds: crate::fs::file::FdTable::empty(),
             pgtbl: 0,
             heap_top: 0x1000,
             ustack_npage: 1,
@@ -188,6 +190,7 @@ pub fn proc_alloc() -> Option<&'static mut Proc> {
             p.state = ProcState::Unused;
             p.exit_code = 0;
             p.parent = 0;
+            p.fds = crate::fs::file::FdTable::empty();
             p.pgtbl = 0;
             p.pid = i;
             NEXT_PID.fetch_add(1, Ordering::Relaxed);

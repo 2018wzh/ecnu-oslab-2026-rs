@@ -12,6 +12,7 @@ pub mod context;
 pub mod proc;
 pub mod switch;
 pub mod user;
+pub mod elf;
 // ---- 本阶段模块列表结束 ----
 
 // 把最常用的名字提到 proc 顶层, 让上层写 `proc::Proc` 而非

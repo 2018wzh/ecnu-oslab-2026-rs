@@ -431,6 +431,10 @@ fn block_selfcheck() {
             // 奇炒地坏掉"的工作, 所以单独验证这一层。
             fs_selfcheck(dev);
 
+            // ---- 从磁盘装入用户程序并运行 (lab-9) ----
+            // 走通后下面"嵌入映像"的装载不会执行到 (enter_user 不返回)。
+            // 保留它作为 lab-8 及更早阶段的路径。
+            let _ = launch_from_disk(dev, "init");
         }
         Err(e) => {
             puts("[oslab-rs]   读块 0 失败: ");
@@ -450,11 +454,122 @@ fn block_selfcheck() {
 
 /// 挂载文件系统, 从磁盘读出一个 ELF 用户程序并运行它 —— lab-9 核心。
 ///
-/// 之前用户程序是嵌在内核里的扁平二进制 (lab-4/5 临时做法, 那时没有文件
-/// 系统)。现在整条链路通了 (块设备 → 缓冲缓存 → fs(inode/目录) → 按路径
-/// 读 ELF → 加载器按 program header 装 → 进 U-mode)。扁平改 ELF 非可有
-/// 可无: 扁平要求"文件偏移==虚拟地址偏移"(一条约定, 链接脚本稍有不慎就
+/// 整条链路是: 块设备 → 缓冲缓存 → fs(inode/目录) → 按路径读 ELF →
+/// 加载器按 program header 装 → 进 U-mode。用 ELF 而非扁平二进制, 因为
+/// 扁平要求"文件偏移==虚拟地址偏移"(一条约定, 链接脚本稍有不慎就
 /// 破坏); ELF 把入口与每段位置显式写进文件, 不存在"约定被破坏"这种失败。
+fn launch_from_disk(dev: &'static mut dyn oslab_drivers::block::BlockDevice, prog: &str) -> bool {
+    use oslab_hal::putchar::puts;
+
+    puts("[oslab-rs] 从磁盘装载用户程序 (");
+    puts(prog);
+    puts(")...\n");
+
+    // ---- 1. 挂载文件系统 ----
+    let mut fs = match crate::fs::mount::Fs::mount(dev) {
+        Ok(fs) => fs,
+        Err(e) => {
+            puts("[oslab-rs]   挂载失败: ");
+            puts(match e {
+                crate::fs::mount::MountError::Io => "读超级块失败",
+                crate::fs::mount::MountError::BadMagic => "魔数不对 (忘 mkfs?)",
+                crate::fs::mount::MountError::BadSuperblock => "超级块不自洽",
+                crate::fs::mount::MountError::BadRoot => "根目录不是目录",
+            });
+            puts("\n");
+            return false;
+        }
+    };
+
+    // ---- 2. 按路径找到它 ----
+    let mut path = [0u8; 32];
+    path[0] = b'/';
+    let n = prog.len().min(30);
+    path[1..1 + n].copy_from_slice(&prog.as_bytes()[..n]);
+    let path = &path[..1 + n];
+
+    let Some(inum) = fs.lookup(path) else {
+        puts("[oslab-rs]   磁盘上找不到 ");
+        puts(prog);
+        puts("\n");
+        return false;
+    };
+    let inode = fs.read_inode(inum);
+    puts("[oslab-rs]   找到 ");
+    puts(prog);
+    puts(": inode ");
+    console::print_dec(inum as usize);
+    puts(", ");
+    console::print_dec(inode.size as usize);
+    puts(" 字节\n");
+
+    // ---- 3. 把整个文件读进内存 ----
+    // 用静态缓冲: 用户程序最大 70KB, 放栈上会写穿 4KiB 内核栈。静态区零
+    // 初始化且不随调用栈变化。
+    const IMG_MAX: usize = 72 * 1024;
+    static mut IMG: [u8; IMG_MAX] = [0u8; IMG_MAX];
+    // SAFETY: 启动阶段只有一个 hart 在用这块缓冲。
+    let img = unsafe { &mut *core::ptr::addr_of_mut!(IMG) };
+
+    let (read, complete) = fs.read_file(&inode, img);
+    if !complete {
+        puts("[oslab-rs]   读文件不完整 (\n");
+        return false;
+    }
+    puts("[oslab-rs]   已读入 ");
+    console::print_dec(read);
+    puts(" 字节\n");
+
+    // ---- 3.5 把文件系统安装成全局的 ----
+    // 系统调用 (open/read/exec) 之后都通过它访问磁盘; 必须在创建进程之前
+    // (进程一创建就要建 fd 0/1/2)。放这里是因为上面的 lookup/read_file 还
+    // 需本地 `fs` 的可变借用; 装到全局后只能经 mount::fs() 访问。
+    crate::fs::mount::install(fs);
+
+    // ---- 4. 创建一个进程, 用 ELF 加载器装入 ----
+    let Some(p) = proc::proc_alloc() else {
+        puts("[oslab-rs]   进程表已满\n");
+        return false;
+    };
+    let pid = p.pid;
+    // SAFETY: pid 刚由 proc_alloc 返回。
+    unsafe {
+        proc::set_current(pid);
+    }
+
+    match proc::user::proc_make_user_elf(pid, &img[..read]) {
+        Ok(entry) => {
+            puts("[oslab-rs]   ELF 入口 = ");
+            console::print_hex(entry as usize);
+            puts(", 进程 pid=");
+            console::print_dec(pid);
+            puts(" 已就绪, 切换到用户态...\n\n");
+        }
+        Err(e) => {
+            puts("[oslab-rs]   ELF 装载失败: ");
+            puts(match e {
+                proc::elf::ElfError::TooSmall => "文件太小",
+                proc::elf::ElfError::BadMagic => "不是 ELF (魔数不对)",
+                proc::elf::ElfError::Not64 => "不是 64 位 ELF",
+                proc::elf::ElfError::NotLittleEndian => "不是小端序",
+                proc::elf::ElfError::WrongMachine => "不是 RISC-V 目标文件",
+                proc::elf::ElfError::OutOfUserRange => "段落在用户地址空间之外",
+                proc::elf::ElfError::LoadFailed => "分配物理页失败",
+                proc::elf::ElfError::NoLoadableSegment => "没有可装载的段",
+            });
+            puts("\n");
+            return false;
+        }
+    }
+
+    // ---- 5. 进入用户态 (不返回) ----
+    // SAFETY: proc_make_user_elf 已准备好 trapframe 与页表映射。
+    unsafe {
+        proc::user::enter_user();
+    }
+}
+
+/// 挂载文件系统并列出根目录 —— lab-8 验收点。
 ///
 /// inode 读取与目录解析是"做对了没输出"的工作, 所以单独验证: 挂载 →
 /// 读根目录 inode → 用缓冲缓存读内容 (含间接块) → 逐个解释 dirent。一行

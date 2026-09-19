@@ -12,8 +12,6 @@
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(usize)]
 pub enum Syscall {
-    /// (lab-4..8) 内核打印固定字符串。不用 fd 表。
-    HelloWorld = 0,
     /// 结束当前进程。`a0` = 退出码。
     Exit = 1,
     /// 复制当前进程。返回: 父进程得到子进程 pid, 子进程得到 0。
@@ -38,10 +36,26 @@ pub enum Syscall {
     Close = 12,
     /// 移动读写位置 (lab-9)。
     Lseek = 13,
+    /// 复制文件描述符。
+    Dup = 16,
+    /// 取文件状态。
+    FStat = 17,
+    /// 列出目录项。
+    GetDents = 18,
+    /// 创建目录。
+    Mkdir = 19,
+    /// 切换工作目录。
+    Chdir = 20,
+    /// 打印当前工作目录。
+    PrintCwd = 21,
+    /// 建立硬链接。
+    Link = 22,
+    /// 解除硬链接。
+    Unlink = 23,
 }
 
 // `Syscall` 的取值个数 + 1 —— 用于在内核里对调用号做范围检查。
-pub const SYS_MAX: usize = 14;
+pub const SYS_MAX: usize = 24;
 
 impl Syscall {
     // 解码寄存器里的原始调用号。未定义的返回 `None`, 让调用方明确地报错。
@@ -59,7 +73,14 @@ impl Syscall {
             11 => Syscall::Open,
             12 => Syscall::Close,
             13 => Syscall::Lseek,
-            0 => Syscall::HelloWorld,
+            16 => Syscall::Dup,
+            17 => Syscall::FStat,
+            18 => Syscall::GetDents,
+            19 => Syscall::Mkdir,
+            20 => Syscall::Chdir,
+            21 => Syscall::PrintCwd,
+            22 => Syscall::Link,
+            23 => Syscall::Unlink,
             _ => return None,
         })
     }

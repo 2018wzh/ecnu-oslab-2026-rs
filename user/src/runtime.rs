@@ -23,7 +23,6 @@ use core::panic::PanicInfo;
 #[repr(usize)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Syscall {
-    HelloWorld = 0,
     Exit = 1,
     Fork = 2,
     Read = 3,
@@ -36,6 +35,14 @@ pub enum Syscall {
     Open = 11,
     Close = 12,
     Lseek = 13,
+    Dup = 16,
+    FStat = 17,
+    GetDents = 18,
+    Mkdir = 19,
+    Chdir = 20,
+    PrintCwd = 21,
+    Link = 22,
+    Unlink = 23,
 }
 
 /// 系统调用错误码 (ABI 上是负数)。
@@ -120,11 +127,6 @@ pub fn syscall(call: Syscall, a0: usize, a1: usize, a2: usize) -> Result<usize, 
 // 每个封装都是"把 Rust 的类型变成 ABI 上的整数"这一件事。它们存在的
 // 价值是: 用户程序不必记住调用号和参数顺序 —— 那是 ABI 的细节,
 // 应该只在一个地方知道。
-
-/// (lab-4..8) 内核打印固定字符串。
-pub fn helloworld() -> Result<usize, SysError> {
-    syscall(Syscall::HelloWorld, 0, 0, 0)
-}
 
 /// 写: `write(fd, buf, len)`。
 /// (lab-6) 让当前进程睡 n 个 tick。

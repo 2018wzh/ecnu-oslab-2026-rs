@@ -12,14 +12,10 @@
 
 use oslab_hal::arch::{TrapFrame, TRAPFRAME_SIZE};
 
+use crate::mm::pmem;
+use crate::mm::uvm::{USER_BASE, USER_STACK_BASE, USER_STACK_SIZE};
 use crate::proc;
 
-/// 从 **ELF 映像**创建一个用户进程 (从磁盘装入时走这条路)。
-///
-/// 与 [`proc_make_user`] 的区别只有代码段怎么来: 前者把整段扁平字节
-/// 拷到 USER_BASE 且入口就是 USER_BASE; 本函数按 ELF 的 program header
-/// 把每个段装到它声明的地址, 用 e_entry 作入口 —— 这才是真实 OS 的
-/// 做法, 内核不依赖任何约定。
 /// 新进程**第一次被调度**时的内核入口。
 ///
 /// 不是被 `call` 进来的, 而是被恢复上下文 (`context_switch` 的 `ret`)
@@ -36,6 +32,75 @@ pub unsafe extern "C" fn forkret() -> ! { unimplemented!() }
 /// 当前进程必须已由 [`proc_make_user`] 准备好 trapframe, 用户页已映射。
 /// 本函数不返回。
 pub unsafe fn enter_user() -> ! { unimplemented!() }
+
+/// 从 **ELF 映像**创建一个用户进程 (从磁盘装入时走这条路)。
+///
+/// 与 [`proc_make_user`] 的区别只有代码段怎么来: 前者把整段扁平字节
+/// 拷到 USER_BASE 且入口就是 USER_BASE; 本函数按 ELF 的 program header
+/// 把每个段装到它声明的地址, 用 e_entry 作入口 —— 这才是真实 OS 的
+/// 做法, 内核不依赖任何约定。
+pub fn proc_make_user_elf(pid: usize, image: &[u8]) -> Result<u64, super::elf::ElfError> {
+    let Some(p) = proc::proc_at(pid) else {
+        return Err(super::elf::ElfError::LoadFailed);
+    };
+    // ---- 0. 为本进程建一张私有页表 ----
+    // 不能共用内核全局页表, 否则两个进程的用户页面落在同一虚拟地址
+    // 互相覆盖。新表已复制内核全部映射, 陷入内核后一切照旧。
+    let Some(root) = crate::mm::vm::kvm_create_process_table() else {
+        return Err(super::elf::ElfError::LoadFailed);
+    };
+    let pt = &mut crate::mm::vm::PageTable::from_root(root);
+    p.pgtbl = root.0 << 12;   /* 记下根页的物理地址 (调 satp 用) */
+
+    // ---- 1. 按 ELF 的 program header 装载各个段 ----
+    let entry = super::elf::load_into(pt, image)?;
+    super::elf::check_entry(entry)?;
+
+    // ---- 1.5 建立标准输入/输出/错误 ----
+    // 用户程序第一行输出是 write(1,...), 会先查 fd 表; 缺了返回 NoFd,
+    // 现象是"跑完了但看不到输出"。放这里保证任何创建用户进程的路径
+    // 都建立了 fd 0/1/2。
+    p.fds.open_stdio();
+
+    // ---- 2. 分配并映射用户栈 ----
+    // ELF 只描述代码与数据, 栈由内核分配, 放在独立高地址 USER_STACK_BASE。
+    let stack = pmem::pmem_alloc(pmem::Pool::User);
+    if stack == 0 {
+        return Err(super::elf::ElfError::LoadFailed);
+    }
+    let stack_ppn = oslab_hal::arch::mm::PhysAddr(stack).page_num();
+    let stack_perms = oslab_hal::arch::mm::Perms::READ
+        .or(oslab_hal::arch::mm::Perms::WRITE)
+        .or(oslab_hal::arch::mm::Perms::USER);
+    // SAFETY: pt 是内核页表; USER_STACK_BASE 页对齐; stack 是刚分配的页。
+    if unsafe { crate::mm::vm::map(pt, USER_STACK_BASE, stack_ppn, stack_perms) }.is_err() {
+        return Err(super::elf::ElfError::LoadFailed);
+    }
+
+    // ---- 3. 造 trapframe ----
+    // SAFETY: p.trapframe 指向本进程内核栈顶之下的一段保留区域。
+    let tf: &mut TrapFrame = unsafe { &mut *p.trapframe };
+    tf.set_faulting_pc(entry as usize);
+    tf.set_user_sp(USER_STACK_BASE + USER_STACK_SIZE);
+    tf.set_kernel_stack_top(p.kstack_top);
+    tf.set_a0(0);
+    tf.set_saved_status(0);
+
+    p.state = proc::ProcState::Runnable;
+    Ok(entry)
+}
+
+/// 用一段 ELF 映像**替换当前进程**的地址空间 (exec 系统调用核心)。
+///
+/// 与 [`proc_make_user_elf`] 的区别: 前者服务新进程 (启动时创建 pid 1),
+/// 本函数服务已在跑的进程, 不碰 pid/父子关系/fd 表, 只换"用户地址空间
+/// + 寄存器现场" (fd 表保留: exec 是"同一进程换程序", shell 先 fork 再
+/// exec, 命令期待 stdout 是继承下来的)。
+///
+/// 顺序必须"新地址空间全部造好 -> 才回收旧的 -> 才切换": 装载可能失败,
+/// 而 exec 失败语义是"返回错误码继续跑原程序", 先释放旧空间则失败时
+/// 就没映像可跑了。
+pub fn exec_current(image: &[u8]) -> Result<u64, super::elf::ElfError> { unimplemented!() }
 
 /// 编译期断言: trapframe 放得下。
 const _: () = {

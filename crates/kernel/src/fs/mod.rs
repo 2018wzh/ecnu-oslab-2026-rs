@@ -4,6 +4,8 @@
 
 // ---- 各子系统模块 ----
 /// 把驱动层块设备适配成文件系统需要的接口。
+pub mod dev;
+pub mod file;
 pub mod bio;
 pub mod adapter;
 pub mod bitmap;
