@@ -3,3 +3,7 @@
 //! `bio` 与 `bitmap` 访问磁盘。
 
 // ---- 各子系统模块 ----
+/// 把驱动层块设备适配成文件系统需要的接口。
+pub mod bio;
+pub mod adapter;
+pub mod bitmap;

@@ -12,4 +12,5 @@
 pub mod mmio;
 pub mod serial;
 pub mod irqchip;
+pub mod block;
 // ---- 本阶段模块列表结束 ----

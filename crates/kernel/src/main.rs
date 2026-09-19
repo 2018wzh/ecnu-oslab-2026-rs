@@ -256,6 +256,9 @@ pub extern "C" fn kernel_entry() -> ! {
     // ---- 阶段 9.5: 块设备自检 ----
     // 探测 virtio 槽位、读超级块校验魔数: 把"驱动是否正确"变成立刻可见的
     // 结果, 而非等到 fs 挂载时才间接暴露。
+    if arch::cpu::is_boot_hart() {
+        block_selfcheck();
+    }
 
     // ---- 阶段 10: 创建第一个用户进程并进入用户态 ----
     // 只启动核做 (创建进程/分配用户页/建 trapframe 都是全局动作, 每个 hart
@@ -373,7 +376,83 @@ fn boot_banner(cpuid: usize) {
 /// 专门写自检, 因为"块设备能读"是 fs/exec/从磁盘装用户程序整条链的地基;
 /// 它坏了上层全失败且现象都是"什么都没有输出", 无从分辨是哪层。一个
 /// "读一块并检查魔数"的自检把这层单独验证了。
+fn block_selfcheck() {
+    // 不再需要 BlockDevice: 设备由 drivers 层选好并返回一个 trait 对象。
+    use oslab_drivers::block::BlockError;
+    use oslab_hal::putchar::puts;
 
+    let plat = arch::cpu::platform();
+    puts("[oslab-rs] 块设备自检: 按平台描述初始化\n");
+
+    // "哪种设备"→"用哪个驱动"的映射在 drivers/ 里, kernel 只拿到 trait
+    // 对象, 加一种块设备 kernel 不改一行 (所以不会出现具体驱动的名字)。
+    //
+    // SAFETY: 启动阶段只调用一次; 设备地址在 kvm_init 时已映射。
+    let dev = match unsafe { oslab_drivers::block::init_default(plat) } {
+        Ok(d) => d,
+        Err(e) => {
+            puts("[oslab-rs]   块设备初始化失败: ");
+            puts(match e {
+                BlockError::NotReady => "设备未就绪 (没插卡 / 没挂磁盘?)",
+                BlockError::Timeout => "超时",
+                BlockError::DeviceError => "设备报告错误",
+                BlockError::OutOfRange => "块号越界",
+                BlockError::BadBufferSize => "缓冲区大小不对",
+                BlockError::Unsupported => "未实现",
+            });
+            puts("\n");
+            return;
+        }
+    };
+
+    puts("[oslab-rs]   设备: ");
+    puts(dev.name());
+    puts("  容量: ");
+    console::print_dec(dev.capacity_sectors() as usize);
+    puts(" 扇区\n");
+
+    // 读第 0 块 (超级块)。先打印"开始读": read 可能卡在等待设备完成; 没有
+    // 这行,"读失败"与"读卡住"在串口上看一模一样 (都没下文)。
+    puts("[oslab-rs]   开始读块 0 ...\n");
+
+    let mut buf = [0u8; 512];
+    match dev.read(0, &mut buf) {
+        Ok(()) => {
+            let magic = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
+            puts("[oslab-rs]   读块 0 成功, 超级块魔数 = ");
+            console::print_hex(magic as usize);
+            if magic == 0x1020_3040 {
+                puts("  <- 与 mkfs 写入的一致, 块设备通路正常\n");
+            } else {
+                puts("  <- 与期望的 0x10203040 不符!\n");
+            }
+            // ---- lab-8 自检: 挂载文件系统并列出根目录 ----
+            // inode 读取与目录解析属于"做对了没输出、做错了只是后面某步莫名
+            // 奇炒地坏掉"的工作, 所以单独验证这一层。
+        }
+        Err(e) => {
+            puts("[oslab-rs]   读块 0 失败: ");
+            // 打印具体错误变体, 区分"队列未建立/设备不响应/参数越界"。
+            puts(match e {
+                BlockError::NotReady => "NotReady (队列未建立)",
+                BlockError::Timeout => "Timeout (设备未在预期时间内完成)",
+                BlockError::DeviceError => "DeviceError (设备报告了错误状态)",
+                BlockError::OutOfRange => "OutOfRange (块号越界)",
+                BlockError::BadBufferSize => "BadBufferSize (缓冲区大小不对)",
+                BlockError::Unsupported => "Unsupported (未实现)",
+            });
+            puts("\n");
+        }
+    }
+}
+
+/// 挂载文件系统, 从磁盘读出一个 ELF 用户程序并运行它 —— lab-9 核心。
+///
+/// 之前用户程序是嵌在内核里的扁平二进制 (lab-4/5 临时做法, 那时没有文件
+/// 系统)。现在整条链路通了 (块设备 → 缓冲缓存 → fs(inode/目录) → 按路径
+/// 读 ELF → 加载器按 program header 装 → 进 U-mode)。扁平改 ELF 非可有
+/// 可无: 扁平要求"文件偏移==虚拟地址偏移"(一条约定, 链接脚本稍有不慎就
+/// 破坏); ELF 把入口与每段位置显式写进文件, 不存在"约定被破坏"这种失败。
 /// 创建第一个用户进程, 然后把 CPU 交给用户态。
 ///
 /// 链路: proc_alloc (槽+内核栈+trapframe 位置) → set_current → 

@@ -126,12 +126,12 @@ pub fn helloworld() -> Result<usize, SysError> {
     syscall(Syscall::HelloWorld, 0, 0, 0)
 }
 
+/// 写: `write(fd, buf, len)`。
 /// (lab-6) 让当前进程睡 n 个 tick。
 pub fn sleep(ticks: usize) -> Result<usize, SysError> {
     syscall(Syscall::Sleep, ticks, 0, 0)
 }
 
-/// 写: `write(fd, buf, len)`。
 pub fn write(fd: usize, buf: &[u8]) -> Result<usize, SysError> {
     syscall(Syscall::Write, fd, buf.as_ptr() as usize, buf.len())
 }

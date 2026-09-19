@@ -13,6 +13,38 @@ pub use smp_entry::SECONDARY_ENTRY;
 pub use trap::{TrapCause, N_REGISTERS, TRAPFRAME_SIZE};
 pub use trap::TrapFrame;
 
+/// 驱动与设备通信的典型模式是"写内存 -> 通知设备"。这两步之间的
+/// 顺序**必须**由屏障保证, 否则设备可能看到未写完的数据。
+///
+/// 但"用什么指令表达屏障"是**架构相关的**: RISC-V 是 `fence`,
+/// AArch64 是 `dmb`。所以驱动只调用 `arch::barrier::io()`,
+/// 由 arch 层决定底下是什么。
+pub mod barrier {
+    /// 全屏障 (读写都排序)。
+    #[inline]
+    pub fn full() {
+        super::csr::fence();
+    }
+    /// 写-写屏障。
+    #[inline]
+    pub fn write() {
+        super::csr::fence_w();
+    }
+    /// 设备 I/O 屏障 —— "写内存 -> 通知设备"之间必须用它。
+    ///
+    /// 见 `csr::fence_io` 的说明: 用错屏障的 bug 表现为
+    /// "加一句打印就好了"的时序不稳定。
+    #[inline]
+    pub fn io() {
+        super::csr::fence_io();
+    }
+    /// 指令缓存同步 (写完代码准备执行时用)。
+    #[inline]
+    pub fn icache() {
+        super::csr::fence_i();
+    }
+}
+
 /// 本架构在 ELF 文件头 `e_machine` 字段里的编号。
 ///
 /// "哪种机器码这个内核能跑"是架构的事实, 所以放这里而非 ELF 加载器。
