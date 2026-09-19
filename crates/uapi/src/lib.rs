@@ -12,6 +12,8 @@
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(usize)]
 pub enum Syscall {
+    /// (lab-4..8) 让内核打印固定字符串 "proczero: hello world"。不用 fd 表。
+    HelloWorld = 0,
     /// 结束当前进程。`a0` = 退出码。
     Exit = 1,
     /// 复制当前进程。返回: 父进程得到子进程 pid, 子进程得到 0。
@@ -54,6 +56,7 @@ impl Syscall {
             11 => Syscall::Open,
             12 => Syscall::Close,
             13 => Syscall::Lseek,
+            0 => Syscall::HelloWorld,
             _ => return None,
         })
     }

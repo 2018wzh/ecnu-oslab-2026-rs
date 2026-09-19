@@ -25,6 +25,7 @@ members = [
     "crates/hal",
     "crates/drivers",
     "crates/kernel",
+    "user",
     "xtask",
 ]
 default-members = [

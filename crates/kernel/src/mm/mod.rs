@@ -5,5 +5,6 @@
 
 // ---- 各子系统模块 ----
 pub mod pmem;
+pub mod uvm;
 pub mod vm;
 // ---- 本阶段模块列表结束 ----

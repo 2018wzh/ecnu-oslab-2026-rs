@@ -34,6 +34,11 @@ pub mod mm;
 pub mod secondary;
 pub mod timer;
 pub mod trap;
+pub mod syscall;
+pub mod proc;
+pub mod sched;
+pub mod sync;
+pub mod fs;
 // ---- 本阶段模块列表结束 ----
 
 // 由 build.rs 生成: 嵌入的 Rust 用户程序映像。
@@ -41,6 +46,9 @@ pub mod trap;
 // (不在源码树), 而 #[path] 只接受字面量; include! 接受任意表达式, 可拼
 // 出 OUT_DIR 路径。include 进来的 pub static 落在本模块 (名字经下面 use
 // 保持可读)。
+mod user_images {
+    include!(concat!(env!("OUT_DIR"), "/user_images.rs"));
+}
 
 // ---------------------------------------------------------------------------
 // 内核入口 (由 hal 的启动汇编调用)
@@ -201,7 +209,10 @@ pub extern "C" fn kernel_entry() -> ! {
     // ---- 进程与调度 ----
     // 放在分页之后: 进程需要内核栈 (来自物理页分配器) 与页表; 顺序反了
     // 症状是"进程一创建就缺页"。属于 lab-4 (进程表与调度器是创建进程前提)。
-
+    if arch::cpu::is_boot_hart() {
+        proc::proc_init();
+    }
+    proc::sched_init_hart();
 
     // ---- 建立真正的 trap 处理 ----
     // 必须在打开中断之前: 顺序反了, 已使能的中断可能在 stvec 还是停车点时
@@ -246,6 +257,13 @@ pub extern "C" fn kernel_entry() -> ! {
     // 探测 virtio 槽位、读超级块校验魔数: 把"驱动是否正确"变成立刻可见的
     // 结果, 而非等到 fs 挂载时才间接暴露。
 
+    // ---- 阶段 10: 创建第一个用户进程并进入用户态 ----
+    // 只启动核做 (创建进程/分配用户页/建 trapframe 都是全局动作, 每个 hart
+    // 做一遍会得到 N 个 init 互相覆盖进程表)。其他 hart 直接进 idle (真实
+    // SMP 调度器会让空闲核去"偷"别的核的进程, 见 lab-6)。
+    if arch::cpu::is_boot_hart() {
+        launch_first_user_program();
+    }
 
     if arch::cpu::is_boot_hart() {
         oslab_hal::putchar::puts("[oslab-rs] 进入 idle 循环\n");
@@ -364,7 +382,60 @@ fn boot_banner(cpuid: usize) {
 ///
 /// 把用户映像"嵌入"而非从磁盘读: 本阶段目标是证明用户态通路通; 若同时依赖
 /// 块设备/fs/ELF 三件事, 任何错的现象都一样 ("什么都没有输出") 无法定位。
-/// lab-7/8/9 换成分块读 ELF (那时有文件系统)。
+fn launch_first_user_program() {
+    use oslab_hal::putchar::puts;
+
+    // ---- 检查映像是否可用 ----
+    // 空映像会让 proc_make_user 分配 0 代码页、把用户 PC 设成怪地址、进用户态
+    // 立刻缺页 ("执行了一条指令就崩"), 与真正原因 (忘建用户程序) 相距很远,
+    // 所以显式检查并打印指引。
+    if !user_images::USER_IMAGE_INIT_FOUND {
+        puts("[oslab-rs] 没有找到用户程序映像 target/user/init.bin\n");
+        puts("[oslab-rs] 请先运行: cargo xtask disk --config <name>\n");
+        puts("[oslab-rs] 然后重新构建内核。现在进入 idle。\n");
+        return;
+    }
+
+    puts("[oslab-rs] 正在装载用户程序 (Rust, U-mode)...\n");
+    puts("[oslab-rs]   映像大小: ");
+    console::print_dec(user_images::USER_IMAGE_INIT.len());
+    puts(" 字节\n");
+
+    // ---- 1. 分配进程槽 ----
+    let Some(p) = proc::proc_alloc() else {
+        puts("[oslab-rs] FATAL: 进程表已满, 无法创建 init\n");
+        return;
+    };
+    let pid = p.pid;
+
+    // ---- 2. 设为当前进程 ----
+    // 必须在 proc_make_user 之前: 它 (及后面的 enter_user) 都用 current()。
+    //
+    // SAFETY: pid 刚由 proc_alloc 返回, 是合法进程号。
+    unsafe {
+        proc::set_current(pid);
+    }
+
+    // ---- 3. 装入映像并准备 trapframe ----
+    if !crate::mm::uvm::proc_make_user(pid, user_images::USER_IMAGE_INIT) {
+        puts("[oslab-rs] FATAL: 装入用户程序失败 (内存不足?)\n");
+        return;
+    }
+
+    puts("[oslab-rs] init (pid=");
+    console::print_dec(pid);
+    puts(") 已就绪, 切换到用户态...\n\n");
+
+    // ---- 4. 进入用户态 ----
+    // 不返回: 切页表并 sret, CPU 从此在 U-mode 运行; 用户程序系统调用时会
+    // 重新陷入内核 (走 trap_entry)。
+    //
+    // SAFETY: proc_make_user 已准备好 trapframe; 调用者是启动核, 处于可切换
+    // 特权级的上下文。
+    unsafe {
+        proc::user::enter_user();
+    }
+}
 
 /// 每个 hart 的等待循环。
 ///

@@ -199,14 +199,9 @@ fn cmd_build(args: &[String]) -> ExitCode {
 
     // ---- 第 1 步: 先构建用户程序 ----
     // 内核 build.rs 会 include_bytes! 嵌入用户程序映像, 所以用户程序必须先构建好。
-    // 【本阶段还没有用户程序】: `user/` 要到 lab-4 才出现。
-    // 用"crate 是否存在"来判断, 而不是把这一步删掉 —— 后面的阶段直接
-    // 合并即可, 不需要再改回来。
-    if build::workspace_root().join("user/Cargo.toml").exists() {
-        if let Err(e) = user::build_user_programs(&cfg, verbose) {
-            eprintln!("\nxtask: 用户程序构建失败\n{e}");
-            return ExitCode::FAILURE;
-        }
+    if let Err(e) = user::build_user_programs(&cfg, verbose) {
+        eprintln!("\nxtask: 用户程序构建失败\n{e}");
+        return ExitCode::FAILURE;
     }
 
     match build::build_kernel(&cfg, opt_release(args), verbose) {

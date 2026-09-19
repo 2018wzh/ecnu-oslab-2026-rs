@@ -39,6 +39,9 @@ pub extern "C" fn secondary_main() -> ! {
     //
     // SAFETY: TRAP_ENTRY 首条指令 (csrrw sp, sscratch, sp) 不依赖已有
     // 寄存器, 满足 trap 入口最低要求。
+    unsafe {
+        arch::trap::install_vector(arch::TRAP_ENTRY);
+    }
 
     // 还没有真 trap 系统时的兜底: 收到中断明确卡住, 不跳地址 0。这是
     // 可接受的 —— 此阶段本就不该有中断 (外部中断源与定时器未配置)。

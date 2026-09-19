@@ -1,0 +1,64 @@
+# ============================================================================
+# oslab-user —— 用户态程序与运行时
+# ----------------------------------------------------------------------------
+# 【为什么用户程序是一个独立的 crate, 而不是内核里的一个模块】
+#
+# 因为它们跑在不同的特权级、用不同的链接地址、由不同的入口进入:
+#
+#          内核 (S-mode)              用户程序 (U-mode)
+#   链接地址  0x80200000 / 0x40200000     0x1000 (user/arch/<arch>/user.ld.in)
+#   入口      _entry (汇编)               _user_start (Rust)
+#   可用指令  全部 CSR、特权指令          ecall 之外什么都不行
+#   依赖      hal / drivers / uapi        【只有 uapi】
+#
+# 把它们放在同一个 crate 里, 编译器就无法保证这条边界 —— 例如内核的
+# 某个函数可能被用户代码"顺手"调用到, 而那在硬件上根本不可能执行。
+# 分成两个 crate 之后, 依赖方向由 Cargo 强制:
+#
+#   内核 -> uapi <- 用户程序
+#            ^
+#            └─ 双方共享的只有 ABI 定义, 没有任何实现代码
+#
+# 这正是本课程想让学生看到的分工: **共享规范, 各自实现**。
+# ============================================================================
+[package]
+name = "oslab-user"
+build = "build.rs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+# 用户程序不是 workspace 的默认成员: 它的 target 与内核相同, 但
+# 构建流程不同 (两者都由 xtask 从**模板**生成链接脚本, 见 configs/arch/<arch>.toml
+# 的 linker / user_linker 两个字段)。
+# 把它排除在 default-members 之外, 可以避免 `cargo build` 误构建它。
+[lib]
+name = "oslab_user"
+# 【为什么是 rlib 而不是 staticlib】
+# 用户程序 (src/bin/*.rs) 需要 `use oslab_user::...` —— 那要求
+# 依赖以 Rust 元数据 (rlib) 的形式存在。staticlib 是"给 C 链接器
+# 用的成品库", 不含 Rust 元数据, 所以 bin 找不到它。
+#
+# 我们不需要 staticlib: 每个用户程序都是独立编译的 bin,
+# 由 xtask 分别链接成 ELF。
+crate-type = ["rlib"]
+
+[dependencies]
+# 【依赖数: 1】而且只依赖 uapi —— 那是 ABI 定义, 不是实现。
+oslab-uapi = { path = "../crates/uapi" }
+
+# 【这里没有 [profile.release]】
+# user/ 是 workspace 的成员, 而 cargo 只在 workspace 根读取 profile ——
+# 写在这里会被静默忽略, 并给出一句 "profiles for the non root package
+# will be ignored" 的提示。
+#
+# 用户程序的优化与 panic 策略由 xtask 在调用 rustc 时显式指定
+# (见 xtask/src/user.rs 的 -C opt-level=s -C panic=abort), 那里才是
+# 真正生效的地方。
+
+[features]
+# 架构选择 (系统调用机制), 见 src/arch/mod.rs。必须恰好选一个;
+# xtask 在构建用户程序时会按 configs/arch/<arch>.toml 自动传入。
+default = ["arch-riscv64"]
+arch-riscv64 = []

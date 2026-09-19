@@ -99,7 +99,8 @@ pub extern "C" fn trap_handler(tf_ptr: *mut TrapFrame) {
             // 程序 ecall 后从 a0 读返回值; 返回路径会用 trapframe 覆盖
             // 所有寄存器)。未实现的调用由 dispatch 内部返回 NoSys, 让
             // 学生能看出哪些调用真的能用。
-            tf.set_a0(oslab_uapi::encode_ret(Err(oslab_uapi::SysError::NoSys)) as usize);
+            let ret = crate::syscall::dispatch(tf);
+            tf.set_a0(ret as usize);
         }
 
         // -----------------------------------------------------------------
