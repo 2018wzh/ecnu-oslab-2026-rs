@@ -2,12 +2,15 @@
 //! 不含设备地址与 CPU 数量 (那些在 [`crate::platform`])。
 
 
+/// 汇编写的 trap 入口 (供 [`trap::install_vector`] 安装)。
+pub use trap_entry::TRAP_ENTRY;
 
 /// 汇编写的从核引导入口 (供 [`smp::start_others`] 使用)。
 pub use smp_entry::SECONDARY_ENTRY;
 
 // 把 trap 模块里最常用的几个类型提到 arch 顶层, 上层写
 // `arch::TrapFrame` 比 `arch::trap::TrapFrame` 更自然。
+pub use trap::{TrapCause, N_REGISTERS, TRAPFRAME_SIZE};
 pub use trap::TrapFrame;
 
 /// 本架构在 ELF 文件头 `e_machine` 字段里的编号。
@@ -36,5 +39,6 @@ pub mod trap;
 pub mod smp;
 mod smp_entry;
 pub mod mm;
+mod trap_entry;
 // ---- 本阶段模块列表结束 ----
 

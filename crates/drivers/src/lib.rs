@@ -11,4 +11,5 @@
 // ---- 各子系统模块 ----
 pub mod mmio;
 pub mod serial;
+pub mod irqchip;
 // ---- 本阶段模块列表结束 ----

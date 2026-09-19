@@ -32,6 +32,8 @@ pub mod console;
 pub mod panic;
 pub mod mm;
 pub mod secondary;
+pub mod timer;
+pub mod trap;
 // ---- 本阶段模块列表结束 ----
 
 // 由 build.rs 生成: 嵌入的 Rust 用户程序映像。
@@ -201,6 +203,20 @@ pub extern "C" fn kernel_entry() -> ! {
     // 症状是"进程一创建就缺页"。属于 lab-4 (进程表与调度器是创建进程前提)。
 
 
+    // ---- 建立真正的 trap 处理 ----
+    // 必须在打开中断之前: 顺序反了, 已使能的中断可能在 stvec 还是停车点时
+    // 到来 → 启动中途卡在死循环里, 无任何输出。
+    trap::init();
+
+    // ---- 定时器: 每个 hart 装自己的第一次闹钟 ----
+    // 定时器是 per-hart 资源 (sie 与 mtimecmp 都是 per-hart), 只让启动核装
+    // 闹钟→从核收不到时钟中断 (无调度器时看不出, 引入调度器后"某核进程再也
+    // 换不出去")。必须排在 trap::init 之后 (闹钟装上随时可能触发)。
+    timer::timer_create();
+
+    // 使能"时钟中断这一类" (四级使能第 3 级); 总开关在下面的阶段 8 才打开。
+    arch::irq::enable_timer();
+
     // ---- 启动其他 hart ----
     // 用 SBI HSM。必须检查返回值: 在不存在的 hart 上调用会返回错误, 忽略则
     // "某个核永远起不来"且无日志。
@@ -366,6 +382,9 @@ fn idle_loop(cpuid: usize) -> ! {
     // 总开关, wfi 立即返回、时钟中断一个都不来 → 屏幕只剩 "boot complete"。
     // 用轮询而非在中断里打印: 中断上下文里做串口要抢锁还可能被嵌套; 把记账
     // 与显示分开后, 写坏的定时器最多让计数不对, 不可能把串口刷爆。
+    arch::irq::enable();
+    let is_boot_hart = arch::cpu::is_boot_hart();
+    let mut last_ticks = timer::timer_ticks();
 
     loop {
         // 等待中断。
@@ -380,6 +399,13 @@ fn idle_loop(cpuid: usize) -> ! {
 
         // 计数变了 -> 刚刚真的收到了一次时钟中断。只在启动核打印, 否则多个
         // hart 的计数交错成无法解读的一串 (看起来像计数器坏, 实为两序列混着)。
+        if is_boot_hart {
+            let now = timer::timer_ticks();
+            if now != last_ticks {
+                timer::timer_print_ticks();
+                last_ticks = now;
+            }
+        }
 
         // 每 100000 轮查一次栈 canary (不全查: wfi 无中断时立即返回, 循环可
         // 转得飞快, 每轮查浪费可观 CPU)。
