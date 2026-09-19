@@ -26,6 +26,8 @@ pub enum Syscall {
     Exec = 5,
     /// 等待子进程退出。`a0` = pid, `a1` = 存放退出码的地址。
     Wait = 6,
+    /// 让当前进程睡 n 个 tick (lab-6)。
+    Sleep = 7,
     /// 内存映射。`a0` = 长度, 返回映射到的虚拟地址。
     Mmap = 9,
     /// 取当前进程号 (调试用)。
@@ -51,6 +53,7 @@ impl Syscall {
             4 => Syscall::Write,
             5 => Syscall::Exec,
             6 => Syscall::Wait,
+            7 => Syscall::Sleep,
             9 => Syscall::Mmap,
             10 => Syscall::GetPid,
             11 => Syscall::Open,

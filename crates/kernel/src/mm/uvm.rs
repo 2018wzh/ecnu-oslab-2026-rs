@@ -99,7 +99,7 @@ pub fn proc_make_user(pid: usize, image: &[u8]) -> bool { unimplemented!() }
 /// # Safety
 /// 两个根页号都必须来自 `kvm_create_process_table` / 内核页表, 且
 /// 调用期间没有别的 hart 在改这两张表。
-pub unsafe fn copy_user_space(parent_root_pa: usize, child_root_pa: usize) -> bool { false }
+pub unsafe fn copy_user_space(parent_root_pa: usize, child_root_pa: usize) -> bool { unimplemented!() }
 
 /// 用户栈的虚拟地址。
 ///

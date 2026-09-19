@@ -30,6 +30,7 @@ pub enum Syscall {
     Write = 4,
     Exec = 5,
     Wait = 6,
+    Sleep = 7,
     Mmap = 9,
     GetPid = 10,
     Open = 11,
@@ -123,6 +124,11 @@ pub fn syscall(call: Syscall, a0: usize, a1: usize, a2: usize) -> Result<usize, 
 /// (lab-4..8) 内核打印固定字符串。
 pub fn helloworld() -> Result<usize, SysError> {
     syscall(Syscall::HelloWorld, 0, 0, 0)
+}
+
+/// (lab-6) 让当前进程睡 n 个 tick。
+pub fn sleep(ticks: usize) -> Result<usize, SysError> {
+    syscall(Syscall::Sleep, ticks, 0, 0)
 }
 
 /// 写: `write(fd, buf, len)`。

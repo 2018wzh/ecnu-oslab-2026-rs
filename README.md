@@ -1,203 +1,189 @@
-# LAB-5: 系统调用流程建立 + 用户态虚拟内存管理
+# LAB-6: 单进程走向多进程——进程调度与生命周期
 
 **前言**
 
-在lab-4中, 我们建立了第一个用户进程`proczero`的基础, 并实现了
-`sys_helloworld`系统调用
+经过前几个实验, 系统里第一次真正有了**多个**可运行实体
 
-本次实验的核心目标是完善系统的能力, 具体包括三个方面:
+每个CPU有一个idle进程, 时钟中断会抢占当前进程
 
-- 建立规范的系统调用流程 (ecall -> trap -> syscall 的分派与处理)
+进程可以睡眠、被唤醒、退出并被回收
 
-- 打通用户态和内核态之间的数据迁移 (copy_from_user / copy_to_user)
+本实验主要围绕两个主题: 进程调度 + 生命周期
 
-- 完善用户态虚拟内存的管理 (堆、栈、mmap区域), 并完成上下文切换
+## 1. 代码组织结构
 
-## 代码组织结构
+本阶段新增/完善的部分:
 
 ```
-crates/kernel/src/mm/uvm.rs      完善: 用户指针的安全访问 (copy_from_user /
-                                copy_to_user) 与用户态虚拟内存管理
-crates/kernel/src/proc/switch.rs
-                                 上下文切换的汇编实现 (本阶段的核心之一)
+crates/kernel/src/
+├── sched.rs       调度器: pick_next_and_switch, 每CPU的idle进程
+└── proc/proc.rs   完善: sleep / wakeup (睡眠与唤醒)
 ```
 
-**标记说明**
+本阶段不新增文件, 改动集中在 `sched.rs` 与 `proc/proc.rs`
 
-**TODO**: 你需要实现新功能 / 你需要完善旧功能
+本阶段需要实现的函数 (函数体是空的):
 
-## 任务1：上下文切换 switch
-
-系统调用和进程切换都需要切换上下文, `switch`是本阶段的核心之一。它的任务
-是保存当前进程的上下文、恢复下一个进程的上下文, 用汇编实现:
-
-```rust
-core::arch::global_asm!(
-    /* 保存 ra, sp, s0-s11 到 old */
-    /* 从 new 恢复 ra, sp, s0-s11 */
-    /* ret */
-);
-```
-
-三件事让它无法用普通Rust函数表达:
-
-1. **它控制`sp`** — 换栈之后, 编译器对"局部变量在哪"的全部假设失效
-
-2. **它"返回两次"** — 从调用者的视角, 函数被暂停然后在未来某刻继续
-
-3. **它必须精确控制保存哪些寄存器** — `callee-saved`是ABI约定, 编译器不会
-   替你暴露这个选择
-
-几个细节需要留意:
-
-- 用`global_asm!`而不是内联`asm!`: 内联`asm!`会被编译器的寄存器分配包围,
-  而这里要的是一个纯粹的汇编符号, 它的入参就是`a0`/`a1`, 没有其他约定
-
-- 偏移量不要手写, 用`core::mem::offset_of!`生成: 以后往`Context`里加字段时,
-  汇编会自动跟着变, 而不是静默错位
-
-```rust
-const off_ra: usize = core::mem::offset_of!(Context, ra);
-```
-
-## 任务2：用户态和内核态的数据迁移
-
-系统调用参数存放在寄存器中, 其中地址类参数指向用户地址空间。用户传入的
-地址基于用户页表, 而进入内核后使用的是内核页表, 两者并不匹配
-
-需要提醒的是: 内核绝不能直接解引用用户传来的指针, 理由有两条:
-
-- 用户指针可能根本没有映射, 内核态直接读会触发缺页、导致整个系统崩溃
-
-- 用户指针可能指向内核内存, 借此读写内核数据结构构成提权漏洞
-
-因此每一次访问都必须先做页表校验。本阶段提供一组唯一的入口函数:
-
-```rust
-unsafe fn copy_from_user(va: usize) -> Option<u8>
-```
-
-返回`Option`: `None`表示"这个地址不能读", 调用者必须处理, 而不是拿到一个
-垃圾字节继续跑
-
-访问用户地址需要手工做地址翻译 (读页表), 这是无法用安全抽象表达的, 所以
-这组函数是`unsafe`的 — 但它们把unsafe收在一个地方, 其余内核代码都不需要
-`unsafe`就能安全地读用户数据
-
-写法如下:
-
-```rust
-unsafe fn copy_from_user(va: usize) -> Option<u8> {
-    let pa = kvm_translate(va)?;          /* 没映射 -> None */
-    /* 还要检查这一页允许用户访问 (U 位),
-     * 否则用户传一个内核地址就能读到内核内存! */
-    Some(*(pa as *const u8))
-}
-```
-
-**两个检查缺一不可**: 映射存在 **且** 属于用户。只检查前者是经典的提权漏洞
-
-## 任务3：用户堆与栈的管理
-
-**堆-HEAP**为用户提供一块连续的大范围内存空间, 它的生长方向是低地址到
-高地址, 由`sys_brk`系统调用手动管理堆顶。**栈-STACK**的生长方向是高地址
-到低地址, 由内核自动管理, 当用户读或写未分配的地址空间时触发缺页异常,
-由内核自动补页
-
-请你完成`uvm_heap_grow`、`uvm_heap_ungrow`、`uvm_ustack_grow` (都在
-`crates/kernel/src/mm/uvm.rs`, 操作当前进程的用户页表):
-
-| 函数 | 语义 |
+| 文件 | 函数 |
 |---|---|
-| `uvm_heap_grow(top, len)` | 用户堆顶从`top`增长`len`(`brk`); 为新跨到的页分配并映射物理页, 返回新的堆顶 |
-| `uvm_heap_ungrow(top, len)` | 堆顶回缩`len`; 把完全离开范围的页解映射并回收 |
-| `uvm_ustack_grow(npage, fault)` | 用户栈缺页时判断`fault`是否落在"合理的下一层栈页", 是则补一页 (栈自动增长) |
+| `crates/kernel/src/proc/proc.rs` | `sleep` / `wakeup` / `proc_copy` |
+| `crates/kernel/src/proc/user.rs` | `forkret` |
+| `crates/kernel/src/mm/uvm.rs` | `copy_user_space` |
+| `crates/kernel/src/sched.rs` | `idle_main` |
+| `crates/kernel/src/sched.rs` | `pick_next_and_switch` |
 
-几个容易做错的地方:
+## 2. idle进程
 
-- **增长的粒度是页**: `len`不是页的整数倍时, 要向上取整到页边界, 多映射的
-  那部分在`brk`语义里是不可用的"余量"
+调度器的职责是"选一个可运行的进程运行"。如果一个都没有呢?
 
-- **回缩只回收"完全离开"的页**: 跨越当前堆顶的那一页仍然被堆占用, 不能
-  回收, 否则用户程序会踩到已释放的物理页
+```
+   所有进程都在等待 I/O / 时钟
+        ↓
+   调度器找不到任何可运行的进程
+        ↓
+   没有 idle: 只能 panic 或死循环 (而且死循环还占着 CPU)
+```
 
-- **栈增长必须设上下界**: `fault`不能离已有栈太远 (否则用户程序可以用一次
-  深递归把内存耗光), 也不能越过`USER_STACK_BASE`
+所以每个CPU都要有一个**永远可运行**的idle进程:
 
-`Proc`里为此新增了字段: `heap_top` (当前堆顶)、`ustack_npage` (已映射的
-栈页数)
+```rust
+loop { unsafe { arch::irq::wait_for_interrupt() } }   /* wfi: 不烧 CPU */
+```
 
-## 任务4：mmap 与 munmap
+`wfi` 让CPU停下来直到有中断. 下一次时钟中断会把它唤醒, 调度器再重新挑一个进程
 
-应用程序有时需要临时申请一块内存空间, 过一会就释放掉。本阶段用链表结构
-维护离散的内存资源, 请你完成`uvm_mmap`、`uvm_munmap`:
+本阶段之前, 用户进程退出后内核就地空转——CPU满载却什么也没做. 有了idle, 退出后CPU会进入`wfi`, **真的停下来**. 这是"调度器在工作"最直观的证据, 也是本阶段的验收点
 
-| 函数 | 语义 |
-|---|---|
-| `uvm_mmap(begin, npages, w)` | 在`begin`建立一段`npages`的映射; `begin == 0`表示由内核选地址 |
-| `uvm_munmap(begin, npages)` | 解除一段映射并回收其物理页 |
+## 3. 进程状态机
 
-需要提醒的是: mmap的地址必须避开已映射区, 内核选地址时要从一个专门的
-"mmap基址"往下/往上找空洞 (`Proc::mmap_base`记录了起点)
+```
+   FREE ──► RUNNABLE ◄──────────┐
+              │  ▲              │ wakeup
+   被选中      │  │ 被抢占        │
+              ▼  │              │
+           RUNNING ────► SLEEPING
+              │  sleep
+              │ exit
+              ▼
+           ZOMBIE ──── 回收 ────► FREE
+```
 
-## 任务5：系统调用流程
+- **ZOMBIE 不能立刻消失**: 父进程还要通过 `wait` 拿到退出码
+- **父进程先死**: 把子进程过继给别人, 否则它们永远等不到 `wait`
+- **回收必须归还全部资源**: 内核栈、TrapFrame所在的页、整个用户地址空间
 
-用户程序通过`ecall`进入内核, 触发trap, 由`dispatch`分派到具体的系统调用
+## 4. lost wakeup
 
-`dispatch`里与用户内存有关的三处调用:
+```rust
+unsafe fn sleep(chan: usize, lk: &SpinLock);
+unsafe fn wakeup(chan: usize);
+```
 
-| 调用 | 方向 | 用哪个校验 |
-|---|---|---|
-| `write` | 用户 -> 内核 | `copy_from_user` |
-| `read` | 内核 -> 用户 | `copy_to_user` |
-| `open` | 用户 -> 内核 (字符串) | `copy_str_from_user` |
+错误写法:
 
-三者都要求"地址落在用户区 **且** 已映射"。只检查前者是提权漏洞, 只检查
-后者会让内核因用户地址未映射而崩溃
+```rust
+if condition_not_met { sleep(chan, lk); }   /* ✗ 判断与睡下之间有窗口 */
+```
 
-## 测试
+另一个CPU完全可能在这个窗口里改变条件并调用`wakeup`, 它发现进程还在运行, 于是**什么也不做**; 然后本进程才真正睡下去, 于是**永远醒不过来**
 
-### QEMU
+正确做法: 调用者持有保护条件的锁 `lk`, 在**持有锁的情况下**调用 `sleep`, 由 `sleep` 内部**原子地**完成"设置状态 + 释放锁":
+
+```
+   1. 设置 chan 与 state = SLEEPING
+   2. 【此时才释放调用者的锁】      ← 顺序是关键
+   3. 让出 CPU
+   4. 被唤醒后: 清 chan, 重新获取 lk
+```
+
+第 2 步的顺序反了就会 lost wakeup
+
+## 5. 具体任务
+
+### 5.1 `pick_next_and_switch` 的策略
+
+遍历进程表, 挑一个 `RUNNABLE` 的进程. **先挑"不是本CPU正在运行的"那个**, 否则你会"切换到自己", 那等于什么都没做
+
+遍历不到任何可运行进程时, 切到本CPU的 **idle** 进程, 这就是"无路可退时的退路"
+
+### 5.2 `sleep` 的顺序
+
+```
+   1. 设置 chan 与 state = SLEEPING
+   2. 释放调用者的锁          ← 必须在 1 之后
+   3. 让出 CPU
+   4. 醒来后清 chan, 重新获取锁
+```
+
+### 5.3 `proc_copy`(fork) 要做的事
+
+```
+   1. 新建页表 (复制内核映射)
+   2. 逐页真实拷贝用户内存     <- copy_user_space
+   3. 复制 trapframe, 但:
+        * 子进程 a0 = 0        ("一次调用, 两次返回且值不同")
+        * sepc += 4            (跳过 ecall, 否则子进程会**无限 fork**)
+   4. 继承 fd 表
+   5. 伪造"第一次被调度"的现场: context.ra = forkret, sp = 栈顶 - TRAPFRAME_SIZE
+```
+
+**第 5 步里 sp 的取值有一个坑**: 本内核把trapframe放在内核栈顶的最后 `TRAPFRAME_SIZE` 字节里. 如果把sp设成 `kstack_top`, `forkret` 的函数序言一压栈就会**覆盖trapframe**, 而它下一步恰恰要用那个trapframe返回用户态. 症状是"子进程一进去就跑飞, sepc 变成 0"
+
+所以起始sp要放在 `kstack_top - TRAPFRAME_SIZE`(trapframe之下)
+
+### 5.4 `exit` 与 `wait` 的配合
+
+```
+   exit:  标 Zombie -> 唤醒父进程 -> 让出 CPU   (不能立刻回收!)
+   wait:  在锁下检查有没有僵尸子进程
+             有 -> 写回退出码, 回收槽位, 返回它的 pid
+             没有但确实有子进程 -> 在锁下睡, 等 exit 唤醒后重试
+             一个子进程都没有 -> 返回 NoEnt (这是调用者的逻辑错误)
+```
+
+**"检查"与"入睡"必须在同一把锁下**, 否则会 lost wakeup
+
+### 5.5 回收资源时注意
+
+Rust 版里 `Proc` 持有 `Option<&'static mut ...>` 之类的原始指针, **没有 Drop 会替你还内存**. 释放内核栈、用户页表这些事都要显式做
+
+## 6. 测试
+
+### 6.1 QEMU
 
 ```bash
 cargo xtask run --config riscv64-qemu-virt
 ```
 
-期望输出与上一个阶段相同 (用户程序通过SYS_HELLOWORLD打印固定字符串):
+实现正确时应当看到(关键部分):
 
 ```
-proczero: hello world
-proczero: hello world
+[init] 调用 fork():
+[parent] fork 返回 pid=3
+[parent] 调用 wait() ...
+[child] 我是子进程 (fork 返回 0), 准备 exit(7)
+[oslab-rs] 进程 3 已退出, 状态码 7
+[parent] wait 回收了 pid=3
+[oslab-rs] 进程 2 已退出, 状态码 0
 ```
 
-**这段输出本身就是回归测试**: 它经过`write` -> `copy_from_user`这条路径,
-方向或边界校验写错, 这里会变成乱码或空白
+**三个验收点:**
 
-### 控制台输入
-
-目前Rust版还没有控制台输入路径 (没有UART接收中断的接线, `IER`一直是0),
-所以`read(0, ...)`按POSIX语义如实返回**0 (EOF)**, 而不是假装读到了数据或
-返回错误
-
-它不影响本阶段的验收 (验收看的是write那条路径的输出)
+1. 用户进程的pid是 **2**(pid 1 是启动流程变成的进程)
+2. 退出时打印"状态码 0"(`proc_exit` 走到位了)
+3. 调度器切到 idle, `switch` 真的在工作
 
 **尾声**
 
-本次实验覆盖了三个层面:
+本实验围绕进程管理的主题, 从一到多构建了进程管理模块
 
-- 首先用汇编实现了上下文切换`switch`, 并打通了用户态和内核态之间的数据
-  迁移 (copy_from_user / copy_to_user)
+进程能变多了, 但它们除了打印什么都做不了: 没有块设备、没有文件系统
 
-- 随后完善了用户态虚拟内存的管理: 堆、栈、mmap区域
-
-- 最后建立了完整的系统调用流程, 系统调用通道已经完备, 进程也只有一个
-
-经过本阶段的打磨, proczero的内存掌控能力和请求服务能力都更完善了,
-**下一个实验要解决的问题, 是让进程变多**
+下一阶段开始引入磁盘管理——块设备驱动、缓冲区缓存、位图分配
 
 ---
 
-## 7. 进阶目标（可选）
+## 6. 进阶目标（可选）
 
 下面三条**不属于基本验收**：默认流程与本分支 README 的期望输出都不依赖它们。
 它们的作用是把这一阶段的内核"做完整一点"——每条都只用到**本章已经给出的东西**，
@@ -209,69 +195,72 @@ proczero: hello world
 
 ---
 
-### 7.1 mmap：让用户自己申请内存
+### 6.1 睡眠与超时队列
 
-**为什么值得做**：现在用户地址空间只有两段：`crates/kernel/src/proc/user.rs` 里 `USER_BASE` 开始的代码/数据一段、
-固定大小的 `USER_STACK_BASE` / `USER_STACK_SIZE` 一段。`mmap` 让用户程序能自己申请内存（堆、共享缓冲，"把文件映射进地址空间"的前置）。
-`crates/uapi/src/lib.rs` 里的系统调用枚举中**只有 `Syscall::Mmap = 9` 被标着"（扩展）"**：
-位置和语义都给你留好了，返回映射的起始地址；而内核侧 `crates/kernel/src/syscall.rs` 的 `dispatch` 现在还没有这一支（它要等"按需分页"才成立）。这是一条"照着 ABI 把缺口补上"的进阶目标。
-
-**思路**：
-- 校验先行：长度是否页对齐、是否超过上限、请求区间是否与既有映射重叠、是否落在用户地址范围内
-  （上界用 `crates/hal/src/platform/mod.rs` 的 `devices_base`，用户栈撞上 UART 那次事故就是没守这条线）。
-- 分配与映射用既有接口组合：`crates/kernel/src/mm/pmem.rs` 的 `pmem_alloc(Pool::User)` 拿到物理页 →
-  `crates/kernel/src/mm/vm.rs` 的 `map` 映射进**进程页表** → 返回虚拟地址。注意要用
-  `PageTable::from_root(...)` 把 `Proc::pgtbl` 包起来，别映射到内核页表上。
-- 地址参数为 0 时表示"内核挑一个地址"：建议在高地址区从下往上或从上往下找空洞。
-- **必须记下"哪些地址是 mmap 出来的"**（一张很小的区间表）：新增的 `crates/kernel/src/mm/vma.rs`，并在 `crates/kernel/src/proc/proc.rs` 的 `Proc` 上加一个字段。否则下一章的 fork 不知道该拷哪些页、
-  进程退出时不知道该回收哪些页——这一条是后面几章的前提。
-- Rust 版还要动 `Syscall` 的文档与 `from_raw` 的注释，让"9 号现在真的能用"这件事在 uapi 里也留下记录。
-
-**怎么算做到**：测试程序 mmap 一段、写入、读回都正确；越界访问触发缺页而不是静默写到别的页；
-空闲页数在 mmap 后减少、退出后回到基线（用 `pmem_stat()` 看）。
-
-**涉及**：`crates/kernel/src/syscall.rs`、`crates/uapi/src/lib.rs`、`crates/kernel/src/mm/vm.rs`、`crates/kernel/src/proc/proc.rs`　**难度**：★★☆
-
-### 7.2 用户栈与堆的增长
-
-**为什么值得做**：现在用户栈是固定大小（写满就撞到未映射区，缺页直接把进程干掉——
-`crates/kernel/src/trap.rs` 里那条 `page fault (demand paging not implemented)` 的注释正是它的现状）。
-真实内核对栈是"按需向下增长"的；堆则是"向上增长的第二个区间"。
-这条让你第一次面对"缺页不是错误，而是'该给页了'的信号"。
+**为什么值得做**：本章刚刚实现的 `sleep(chan, lk)` / `wakeup(chan)` 只能等别人叫醒，
+没有任何"睡一段时间"的能力。Rust 版里连"等若干 tick"这个能力都不存在——
+`crates/hal/src/arch/riscv64/time.rs` 的 `busy_wait_ticks` 是**忙等**（关着中断空转烧 CPU），不是睡眠，谁把它当超时用，谁的进程就会占着 CPU 不放手。
+真实内核用一个按到期时刻排序的队列管理所有定时等待，它同时是 6.3 tickless 的前置。
 
 **思路**：
-- 在 `crates/kernel/src/trap.rs` 的用户态缺页处理里区分两种情况：故障地址**落在允许增长的栈区**（在 `USER_STACK_BASE` 下方、且没有超过增长上限）→ 分配一页、映射进去、记下新的栈底、返回用户态重试；
-  其它地址 → 视为非法访问，按"用户程序出错"终止它（而不是让内核 panic）。
-- 判断依据是**故障地址**（`crates/hal/src/arch/riscv64/trap.rs` 的 `last_fault_address()`，或 `TrapFrame` 里的 `stval`），
-  不是触发指令的地址——这是缺页处理最容易搞错的一点。
-- 重试要"什么都不改地返回"：缺页的那条指令必须被重新执行，所以**不要**去动 `sepc`（系统调用那条路径要 `+4`，别把两者搞混）。
-- 一定要设增长上限（否则等于给了用户一把无限增长的刀），并在超限时给出明确错误。
-- 堆可以用一个"设置堆顶"的系统调用（同时改 `crates/uapi/src/lib.rs` 与 `crates/kernel/src/syscall.rs`），
-  或者直接用 7.1 的 mmap + 懒分配实现。
-- 缺页发生在陷阱上下文里：分配失败要能体面地失败，不能死循环重试同一条指令。
+- 在 `crates/kernel/src/timer.rs` 里新增"睡 n 个 tick"（这是**需要新增**的接口，仓库里没有）：
+  到期时刻 = `timer_get_ticks() + n`，然后睡在一个专用通道上。`sleep` 收的 `chan` 就是一个 `usize`，用超时队列结构体自己的地址当通道最省事。
+- 维护一张"到期时刻 → 进程"的有序表（升序链表或有数组足够，小根堆是加分）；
+  内核里还没有堆，所以表长固定，满了要有明确行为（拒绝 vs 报错）。
+- 时钟中断里检查队首是否到期并 `wakeup`；被别的事件提前唤醒的进程要从队列里**摘掉**，
+  否则会留下"过期的等待者"（症状是莫名被唤醒一次，而且通道号可能已经指向别的用途）。
+- 说清时间语义：队列里存的是**绝对时刻**；而 `timer_reschedule` 用的
+  `crates/hal/src/arch/riscv64/time.rs` 的 `set_next_deadline` 收的是**间隔**（内部做 now+interval），
+  真正收绝对时刻的是 `crates/hal/src/arch/riscv64/sbi.rs` 的 `set_timer`。要把"队首到期时刻"设成下一次闹钟，得自己加一层封装，并把已经过去的时刻夹到最小值。
+- 被终止或退出的进程要能从队列里清理干净（想想 6.3 里"队首指向一个僵尸进程"会怎样）。
 
-**怎么算做到**：一个递归很深、或在栈上开大数组的测试程序能跑过原来会崩的深度；
-超过上限时进程被明确终止并打印原因，内核不受影响。
+**怎么算做到**：多个进程按到期顺序被唤醒（打印各自睡了多少 tick）；
+提前唤醒之后队列长度回到 0；唤醒时刻误差在一个 tick 内。
 
-**涉及**：`crates/kernel/src/trap.rs`、`crates/kernel/src/mm/vm.rs`、`crates/kernel/src/proc/user.rs`、`crates/kernel/src/mm/pmem.rs`　**难度**：★★★
+**涉及**：`crates/kernel/src/timer.rs`、`crates/kernel/src/proc/proc.rs`、`crates/kernel/src/trap.rs`、`crates/hal/src/arch/riscv64/time.rs`　**难度**：★★☆
 
-### 7.3 统一地址空间管理与 lazy-alloc
+### 6.2 可切换的调度策略
 
-**为什么值得做**：7.1 的 mmap 是"立刻给页"，7.2 的栈增长是"缺页时给页"——两件事本质相同却各写一遍。
-真实内核用**一张区间表（VMA）+ 页表**描述地址空间：申请时只登记区间，真正访问时才给页（lazy）。
-这张表也是下一章的进程复制、以及后面文件映射的共同地基。
-Rust 版还有一个额外约束：内核里还没有堆，所以这张表必须是**固定长度的数组**——这反而让它更接近真实内核的取舍。
+**为什么值得做**：这一章的设计要点是"机制与策略分离"，而 `crates/kernel/src/sched.rs` 的 `pick_next_and_switch`
+就是那个策略点（现在轮转逻辑和切换写在同一个函数里，真正做切换的 `switch_to` 是它的下半段）。
+"可切换策略"是检验这句话是否真的成立的最直接方式——如果换策略要动 `switch_to`，说明分离没做到。
+它也很容易产出一份有数据的实验报告。
 
 **思路**：
-- 定义"区间"：起始、长度、权限、类型（代码/数据/栈/mmap/文件映射），用一张有序表挂在 `Proc` 上（几十项足够）。
-  落点是新增的 `crates/kernel/src/mm/vma.rs`；类型用 enum 表达，让 `match` 逼着你把每种区间都处理到。
-- 把三处入口统一到这张表上：mmap 只登记、栈增长往表里更新栈底、缺页处理统一"查表 → 决定给页还是报错"。
-- 分配失败必须能回退（内存耗尽时杀掉进程而不是死循环）；同一条指令可能反复触发缺页，重试必须幂等。
-- 为下一章预留：**进程复制 = 复制这张表 + 复制页内容**。框架里 `crates/kernel/src/proc/proc.rs` 的 `proc_copy`
-  与 `crates/kernel/src/mm/uvm.rs` 的 `copy_user_space` 目前给的是"逐页真实拷贝"（下一章会把它们清空、交回给你重写）——
-  区间表接进去之后，拷贝才有"只拷该拷的页"的依据；写时复制先别急。
-- 边界想清楚：区间之间的空洞、相邻区间的合并、以及"表满了"时的返回路径。
+- 定义一个很小的策略接口：一个"选下一个"的函数 + 一个"时钟到来时"的回调（用于时间片计数、优先级老化等）。
+  Rust 里两种写法都行：`trait SchedPolicy` + `&'static dyn SchedPolicy`，或者一个函数指针结构体。
+  本仓库的风格是"编译期唯一的用常量/cfg，运行期真的会换才用 trait/dyn"——策略是运行期可换的，所以后者是合理选择；
+  但请把选择理由写进注释，别照抄某一种。再写 2–3 个实现：简单轮转、时间片可调、优先级，乃至"空闲核去偷一个就绪进程"。
+- 用已经做过的内核 shell 在运行期切换，并打印每个进程的"被调度次数/等待时长"做对照；
+  `LAST_PICKED` 与 `IDLE_PROC` 这两张 per-hart 表就是现成的线索。
+- 边界想清楚：状态迁移（`ProcState` 的就绪/运行/睡眠）属于**机制**，不能跟着策略走；
+  时间片计数放"机制侧"还是"策略侧"要先决定（建议回调只做计数，选择只做选择）。
+- 多核别忘了：两个 hart 同时"选"必须互斥。框架里现成的只有 `INITED` 这个 `AtomicUsize`
+  （见 `crates/kernel/src/sched.rs`），"选谁 + 改状态"这两步并没有锁保护 —— 正好用
+  `crates/kernel/src/sync.rs` 的自旋锁补一把，并顺手想清楚它与进程表锁的锁序；
+  `pick_next_and_switch` 被调用时可能已经持有别的锁（`sleep` 的 `lk` 就是一把），别在这里引入新的死锁。
 
-**怎么算做到**：mmap 之后空闲页数不变，访问第一页之后才减少；访问第 3 页只多分配 1 页（用 `pmem_stat()` 验证）；超出任何区间的访问仍然被拒；`proc` 相关打印里能看到这个进程的区间表。
+**怎么算做到**：切换策略只用改策略表、不动 `switch_to`；两种策略下每个可用进程都能被跑到（无饿死）；对照数据能解释差异。
 
-**涉及**：`crates/kernel/src/mm/vm.rs`、`crates/kernel/src/proc/proc.rs`、`crates/kernel/src/trap.rs`、`crates/kernel/src/mm/pmem.rs`　**难度**：★★★
+**涉及**：`crates/kernel/src/sched.rs`、`crates/kernel/src/proc/proc.rs`、`crates/kernel/src/timer.rs`、`crates/kernel/src/sync.rs`　**难度**：★★★
+
+### 6.3 完整 tickless：让下一次中断跟着事件走
+
+**为什么值得做**：上一章做到了"动态间隔"，但间隔还是拍脑袋定的。
+真正的 tickless 是"下一次中断 = 最近一个到期事件"（超时队列的队首、当前进程时间片到期），
+空闲且无事件时干脆不设。它把"时钟"从"心跳"变成"闹钟"，也是移动设备省电的根本原因。
+
+**思路**：
+- 在一个函数里算出"下一个事件时刻"：超时队列队首到期时刻、当前进程时间片到期时刻，取最小。
+  放在 `crates/kernel/src/timer.rs` 里最自然（队列在那里），调度器调用它。
+- 在几个关键位置调用它：调度切换之后、进程睡下去之后、时钟中断返回前。
+- 空闲且队列为空时不再设置中断（等外部中断唤醒），需要时再设。
+  Rust 版的接口形状正好合用：`set_next_deadline` 收的是**间隔**，所以把"下一个绝对时刻"减去"现在"即可；差值为 0 或为负时夹到最小值——把过去的时刻原样传下去就是中断风暴。
+- 时间源精度决定最小间隔；如果 `crates/kernel/src/timer.rs` 的 `TICKS` 与"真实时间"绑得太死，考虑改成时间戳（`read_ticks()`）。
+- 最经典的坑：**忘了设置下一次中断 → 系统永远不再被唤醒**。调试期用一个 shell 命令打印
+  "现在时刻 / 下次中断时刻 / 队首到期时刻"，一眼就能看出漏设。
+
+**怎么算做到**：空闲（无进程可跑、无定时等待）时中断计数停止增长；
+有定时等待时唤醒误差在一个 tick 内；系统长时间运行不会卡死。
+
+**涉及**：`crates/kernel/src/sched.rs`、`crates/kernel/src/timer.rs`、`crates/kernel/src/trap.rs`、`crates/hal/src/arch/riscv64/time.rs`　**难度**：★★★
