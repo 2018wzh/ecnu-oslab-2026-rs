@@ -14,6 +14,7 @@
 
 use oslab_user::*;
 
+
 fn main() {
     println!("[hello] 我是用 Rust 编译的用户程序。");
     println!("[hello] 能看到这一行, 说明用户态是通的。");

@@ -14,19 +14,11 @@
 
 use oslab_user::*;
 
-fn main() {
-    // lab-4..8 阶段: 用户进程只发一个最简单的系统调用 SYS_HELLOWORLD,
-    // 内核打印固定字符串。write / fd 表 / 文件抽象属于 lab-9。
-    let _ = oslab_user::helloworld();
-    let _ = oslab_user::helloworld();
 
-    // ---- 验证 getpid ----
-    // 这一步很关键: pid 是内核才知道的信息。用户程序能读到它,
-    // 说明"陷入内核 -> 读 trapframe -> 写回 a0 -> sret 返回"
-    // 整条通路都是正确的, 而不只是"恰好打印出了常量字符串"。
-    loop {
-        core::hint::spin_loop();
-    }
+fn main() {
+    let _ = oslab_user::helloworld();
+    let _ = oslab_user::helloworld();
+    loop { core::hint::spin_loop(); }
 }
 
 entry!(main);

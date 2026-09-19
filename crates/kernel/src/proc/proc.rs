@@ -75,6 +75,12 @@ pub struct Proc {
     /// 每进程一份, 让两个进程能在同一虚拟地址放各自代码 (fork 的前提)。
     /// 内核映射在创建页表时已整份复制进去, 陷入内核后代码/栈/设备仍在。
     pub pgtbl: usize,
+    /// 用户堆顶 (brk 维护, 对齐 2025 lab-5)。
+    pub heap_top: usize,
+    /// 用户栈已映射的页面数 (对齐 2025 lab-5)。
+    pub ustack_npage: usize,
+    /// mmap 区域地址列表 (简单记录; 对齐 2025 lab-5)。
+    pub mmap_base: usize,
 }
 
 // SAFETY: `Proc` 会被多个 hart 共享。裸指针 `trapframe` 指向本进程
@@ -95,6 +101,9 @@ impl Proc {
             exit_code: 0,
             parent: 0,
             pgtbl: 0,
+            heap_top: 0x1000,       // 初始堆顶 (用户基址之后)
+            ustack_npage: 1,
+            mmap_base: 0,
         }
     }
 }

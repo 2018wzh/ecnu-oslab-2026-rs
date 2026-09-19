@@ -12,7 +12,7 @@
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(usize)]
 pub enum Syscall {
-    /// (lab-4..8) 让内核打印固定字符串 "proczero: hello world"。不用 fd 表。
+    /// (lab-4..8) 内核打印固定字符串。不用 fd 表。
     HelloWorld = 0,
     /// 结束当前进程。`a0` = 退出码。
     Exit = 1,

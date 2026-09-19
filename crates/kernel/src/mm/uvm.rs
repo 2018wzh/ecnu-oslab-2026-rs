@@ -120,3 +120,47 @@ const _: () = {
     // 栈必须整体落在最低的设备地址之下。
     assert!(USER_STACK_BASE + USER_STACK_SIZE <= oslab_hal::platform::PLATFORM.devices_base);
 };
+
+// ---------------------------------------------------------------------------
+// 用户堆 / 栈 / mmap (对齐 2025 lab-5 任务 2-5)
+// 这些是本阶段的学生任务 (unimplemented)。学生按 2025 的语义实现:
+//   uvm_heap_grow/ungrow  用户堆顶增长/回缩 (brk)
+//   uvm_ustack_grow       用户栈缺页自动增长
+//   uvm_mmap/uvm_munmap   mmap 区域建立/解除
+//   uvm_destroy/uvm_copy_address_space  用户页表销毁/复制 (fork 用)
+// ---------------------------------------------------------------------------
+
+/// 用户堆顶增长到 `cur_heap_top + len`; 需要时为堆分配并映射新的物理页。
+pub fn uvm_heap_grow(cur_heap_top: usize, len: usize) -> Option<usize> {
+    unimplemented!()
+}
+
+/// 用户堆顶回缩到 `cur_heap_top - len`; 需要时回收超出部分的物理页。
+pub fn uvm_heap_ungrow(cur_heap_top: usize, len: usize) -> Option<usize> {
+    unimplemented!()
+}
+
+/// 用户栈自动增长: 判断 `fault_addr` 是否为合理的栈扩展地址, 是则分配并映射新页。
+pub fn uvm_ustack_grow(old_ustack_npage: usize, fault_addr: usize) -> Option<usize> {
+    unimplemented!()
+}
+
+/// 建立/返回一个 mmap 区域。
+pub fn uvm_mmap(begin: usize, npages: u32, permit_write: bool) -> Option<usize> {
+    unimplemented!()
+}
+
+/// 解除一段 mmap 区域 (回收其物理页)。
+pub fn uvm_munmap(begin: usize, npages: u32) {
+    unimplemented!()
+}
+
+/// 销毁整个用户地址空间 (回收所有用户物理页)。
+pub fn uvm_destroy() {
+    unimplemented!()
+}
+
+/// 把旧用户地址空间的用户部分复制到新的用户页表 (fork 用)。
+pub unsafe fn uvm_copy_address_space(old_root_pa: usize, new_root_pa: usize) -> bool {
+    unimplemented!()
+}

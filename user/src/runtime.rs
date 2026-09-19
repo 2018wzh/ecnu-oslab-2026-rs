@@ -120,8 +120,7 @@ pub fn syscall(call: Syscall, a0: usize, a1: usize, a2: usize) -> Result<usize, 
 // 价值是: 用户程序不必记住调用号和参数顺序 —— 那是 ABI 的细节,
 // 应该只在一个地方知道。
 
-/// (lab-4..8) 请求内核打印固定字符串 "proczero: hello world"。
-/// 当前阶段还没有 fd 表 / 文件抽象, 用户输出走这个最简单的系统调用。
+/// (lab-4..8) 内核打印固定字符串。
 pub fn helloworld() -> Result<usize, SysError> {
     syscall(Syscall::HelloWorld, 0, 0, 0)
 }

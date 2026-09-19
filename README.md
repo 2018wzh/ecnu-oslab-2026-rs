@@ -1,155 +1,203 @@
-# LAB-4: 第一个用户进程的诞生
+# LAB-5: 系统调用流程建立 + 用户态虚拟内存管理
 
-## 1. 代码组织结构 (本阶段新增的部分)
+**前言**
+
+在lab-4中, 我们建立了第一个用户进程`proczero`的基础, 并实现了
+`sys_helloworld`系统调用
+
+本次实验的核心目标是完善系统的能力, 具体包括三个方面:
+
+- 建立规范的系统调用流程 (ecall -> trap -> syscall 的分派与处理)
+
+- 打通用户态和内核态之间的数据迁移 (copy_from_user / copy_to_user)
+
+- 完善用户态虚拟内存的管理 (堆、栈、mmap区域), 并完成上下文切换
+
+## 代码组织结构
 
 ```
-crates/kernel/src/
-├── proc/
-│   ├── mod.rs      进程控制块、进程表、公开接口
-│   ├── context.rs  内核上下文 (callee-saved 寄存器)
-│   ├── switch.rs   上下文切换 (global_asm)
-│   ├── user.rs     进入用户态 + 用户镜像加载
-│   └── ...         进程相关的一切
-├── sync.rs         自旋锁 (供进程表与调度使用)
-└── syscall.rs      系统调用分发 (从 trapframe 取参数)  (TODO)
-
-crates/kernel/src/main.rs 里的 `user_images` 模块把用户程序
-(编译产物) 以字节数组的形式嵌进内核镜像。
+crates/kernel/src/mm/uvm.rs      完善: 用户指针的安全访问 (copy_from_user /
+                                copy_to_user) 与用户态虚拟内存管理
+crates/kernel/src/proc/switch.rs
+                                 上下文切换的汇编实现 (本阶段的核心之一)
 ```
 
-## 2. 需要你完成的部分
+**标记说明**
 
-本阶段要做的是让内核"生"出第一个用户进程: 准备它的地址空间, 切换进用户态, 并
-正确响应它发出的系统调用。`trap.rs` 已经完整处理了"从内核态陷入"的情况, 你的
-工作是在 `handle` 里补上"从用户态陷入"的分支, 结构几乎一样, 区别只有三点:
+**TODO**: 你需要实现新功能 / 你需要完善旧功能
 
-1. 保存/恢复要经过 `TrapFrame` (用户寄存器必须一个不少)
-2. 要处理 `ecall from U` (系统调用), 并且 `sepc += 4`
-3. 用户态缺页是**用户程序的错**, 应当终止它, 而不是让内核 panic
+## 任务1：上下文切换 switch
 
-需要实现的函数有四处。
+系统调用和进程切换都需要切换上下文, `switch`是本阶段的核心之一。它的任务
+是保存当前进程的上下文、恢复下一个进程的上下文, 用汇编实现:
 
-### 2.1 proc_make_user: 创建第一个用户进程
+```rust
+core::arch::global_asm!(
+    /* 保存 ra, sp, s0-s11 到 old */
+    /* 从 new 恢复 ra, sp, s0-s11 */
+    /* ret */
+);
+```
 
-`crates/kernel/src/mm/uvm.rs` 里的 `proc_make_user` 按顺序完成:
+三件事让它无法用普通Rust函数表达:
 
-1. 分配一个进程槽位与内核栈
-2. 在内核栈顶端放 TrapFrame
-3. 把用户镜像按页映射到用户地址空间 (必须带 U 权限)
-4. 分配并映射用户栈
-5. 设置 TrapFrame 的 `sepc` (入口) 与 `sp` (栈顶)
+1. **它控制`sp`** — 换栈之后, 编译器对"局部变量在哪"的全部假设失效
 
-**少了 `U` 权限位的症状**: 进入用户态后立刻取指缺页。
+2. **它"返回两次"** — 从调用者的视角, 函数被暂停然后在未来某刻继续
 
-### 2.2 enter_user: 进入用户态
+3. **它必须精确控制保存哪些寄存器** — `callee-saved`是ABI约定, 编译器不会
+   替你暴露这个选择
 
-`crates/kernel/src/proc/user.rs` 里的 `enter_user` 让进程进入用户态:
+几个细节需要留意:
 
-1. 设为当前进程 (否则系统调用里 `myproc()` 拿到的是错的)
-2. 切换页表
-3. 把内核栈顶写进 `sscratch` (下次陷入时靠它换栈)
-4. 走"从 trap 返回"的路径 —— 不返回
+- 用`global_asm!`而不是内联`asm!`: 内联`asm!`会被编译器的寄存器分配包围,
+  而这里要的是一个纯粹的汇编符号, 它的入参就是`a0`/`a1`, 没有其他约定
 
-### 2.3 dispatch: 系统调用分发
+- 偏移量不要手写, 用`core::mem::offset_of!`生成: 以后往`Context`里加字段时,
+  汇编会自动跟着变, 而不是静默错位
 
-`crates/kernel/src/syscall.rs` 里的 `dispatch` 从 trapframe 取系统调用号和
-参数并分发。两件容易忽略的事:
+```rust
+const off_ra: usize = core::mem::offset_of!(Context, ra);
+```
 
-1. **推进返回地址** (位置在 `trap.rs`, 已给出): 系统调用陷入时 `sepc` 指向
-   `ecall` 那条指令本身, 不推进就会无限重复。
-2. **错误码区分"没实现"与"调用号不存在"**:
+## 任务2：用户态和内核态的数据迁移
 
-   | 情况 | 返回 |
-   |---|---|
-   | 号在 ABI 里有定义但本阶段没实现 (目前只有 `mmap = 9`) | `SysError::NoSys` (`-38`) |
-   | 号在 ABI 里根本不存在 | `SysError::BadArg` (`-1`) |
+系统调用参数存放在寄存器中, 其中地址类参数指向用户地址空间。用户传入的
+地址基于用户页表, 而进入内核后使用的是内核页表, 两者并不匹配
 
-   两者都是负数, 但排查方向相反: `-1` 要去查自己的参数/调用号, `-38` 说明内核
-   确实还没实现这个功能。`docs/abi-spec.md` 有同一张表。
+需要提醒的是: 内核绝不能直接解引用用户传来的指针, 理由有两条:
 
-### 2.4 copy_from_user: 把用户指针变成可信的数据
+- 用户指针可能根本没有映射, 内核态直接读会触发缺页、导致整个系统崩溃
 
-后续阶段 (lab-5 起) 要给用户传入的参数地址做校验时 (例如 `copy_str_from_user`
-读路径、lab-9 的 `write` 读用户缓冲区), `copy_from_user` 是"读用户内存"的唯一
-入口, 它必须做两个检查:
+- 用户指针可能指向内核内存, 借此读写内核数据结构构成提权漏洞
 
-| 检查 | 不做的后果 |
+因此每一次访问都必须先做页表校验。本阶段提供一组唯一的入口函数:
+
+```rust
+unsafe fn copy_from_user(va: usize) -> Option<u8>
+```
+
+返回`Option`: `None`表示"这个地址不能读", 调用者必须处理, 而不是拿到一个
+垃圾字节继续跑
+
+访问用户地址需要手工做地址翻译 (读页表), 这是无法用安全抽象表达的, 所以
+这组函数是`unsafe`的 — 但它们把unsafe收在一个地方, 其余内核代码都不需要
+`unsafe`就能安全地读用户数据
+
+写法如下:
+
+```rust
+unsafe fn copy_from_user(va: usize) -> Option<u8> {
+    let pa = kvm_translate(va)?;          /* 没映射 -> None */
+    /* 还要检查这一页允许用户访问 (U 位),
+     * 否则用户传一个内核地址就能读到内核内存! */
+    Some(*(pa as *const u8))
+}
+```
+
+**两个检查缺一不可**: 映射存在 **且** 属于用户。只检查前者是经典的提权漏洞
+
+## 任务3：用户堆与栈的管理
+
+**堆-HEAP**为用户提供一块连续的大范围内存空间, 它的生长方向是低地址到
+高地址, 由`sys_brk`系统调用手动管理堆顶。**栈-STACK**的生长方向是高地址
+到低地址, 由内核自动管理, 当用户读或写未分配的地址空间时触发缺页异常,
+由内核自动补页
+
+请你完成`uvm_heap_grow`、`uvm_heap_ungrow`、`uvm_ustack_grow` (都在
+`crates/kernel/src/mm/uvm.rs`, 操作当前进程的用户页表):
+
+| 函数 | 语义 |
 |---|---|
-| 地址落在**用户区** (低于 `platform().kernel_base`) | 用户传一个内核地址, 内核就替它把内核内存读出来 (提权) |
-| 这一页**确实映射了**, 而且要用**当前进程**的页表翻译 | 直接解引用未映射地址 → 内核缺页 → 用户把内核搞崩 |
+| `uvm_heap_grow(top, len)` | 用户堆顶从`top`增长`len`(`brk`); 为新跨到的页分配并映射物理页, 返回新的堆顶 |
+| `uvm_heap_ungrow(top, len)` | 堆顶回缩`len`; 把完全离开范围的页解映射并回收 |
+| `uvm_ustack_grow(npage, fault)` | 用户栈缺页时判断`fault`是否落在"合理的下一层栈页", 是则补一页 (栈自动增长) |
 
-```text
-   unsafe fn copy_from_user(va: usize) -> Option<u8> {
-       if va >= oslab_hal::arch::cpu::platform().kernel_base { return None; }
-       let pa = user_translate(va)?;          /* 走当前进程的页表 */
-       Some(unsafe { *(pa as *const u8) })
-   }
-```
+几个容易做错的地方:
 
-两个容易忽略的点:
+- **增长的粒度是页**: `len`不是页的整数倍时, 要向上取整到页边界, 多映射的
+  那部分在`brk`语义里是不可用的"余量"
 
-* **必须用 `user_translate` (当前进程的页表), 不能用内核全局页表
-  `kvm_translate`**: 同一个虚拟地址在不同进程里指向不同的物理页。
-* **逐字节就够了**: 一次 `write` 的字符串很短, 而且逐字节天然处理跨页边界。
+- **回缩只回收"完全离开"的页**: 跨越当前堆顶的那一页仍然被堆占用, 不能
+  回收, 否则用户程序会踩到已释放的物理页
 
-## 3. 进入用户态
+- **栈增长必须设上下界**: `fault`不能离已有栈太远 (否则用户程序可以用一次
+  深递归把内存耗光), 也不能越过`USER_STACK_BASE`
 
-RISC-V 没有"跳到 U-mode"的指令, 只有 `sret` (从 trap 返回)。做法是伪造一个
-TrapFrame: 把 `sepc` 设为程序入口, 把 `sp` 设为用户栈顶, 然后走一遍
-"从 trap 返回"的路径。第一次进入用户态和系统调用返回用户态走的是同一段代码。
+`Proc`里为此新增了字段: `heap_top` (当前堆顶)、`ustack_npage` (已映射的
+栈页数)
 
-`sret` 之前必须显式设置 `sstatus`:
+## 任务4：mmap 与 munmap
 
-```
-   SPP  = 0     返回 U-mode (硬件留下的值可能是 1!)
-   SPIE = 1     返回后打开中断
-```
+应用程序有时需要临时申请一块内存空间, 过一会就释放掉。本阶段用链表结构
+维护离散的内存资源, 请你完成`uvm_mmap`、`uvm_munmap`:
 
-少了这两行, 最常见的症状是**内核静默卡死**: CPU 以为要返回 S-mode, 继续用
-内核页表执行用户代码。
+| 函数 | 语义 |
+|---|---|
+| `uvm_mmap(begin, npages, w)` | 在`begin`建立一段`npages`的映射; `begin == 0`表示由内核选地址 |
+| `uvm_munmap(begin, npages)` | 解除一段映射并回收其物理页 |
 
-## 4. 系统调用: 一组约定
+需要提醒的是: mmap的地址必须避开已映射区, 内核选地址时要从一个专门的
+"mmap基址"往下/往上找空洞 (`Proc::mmap_base`记录了起点)
 
-用户程序要输出一段文字, 它不能直接写 UART 寄存器, 必须请求内核替它做。本阶段
-的用户进程只发一个最简单的请求, 内核收到后打印固定字符串 `proczero: hello world`。
-系统调用是一组约定: 用户程序通过寄存器传入系统调用号, 内核根据调用号分发到
-对应的实现, 提供系统服务后返回处理结果, 用户程序和内核通过 trap 机制通信, 实现
-跨特权级的"函数调用"。
+## 任务5：系统调用流程
 
-几个关键点:
+用户程序通过`ecall`进入内核, 触发trap, 由`dispatch`分派到具体的系统调用
 
-- 调用号与参数必须**从 TrapFrame 取** —— 那是用户寄存器的快照, 内核拿不到
-  "用户此刻的寄存器"。
-- 返回值必须**写回 TrapFrame 的 a0**, 否则 `sret` 恢复寄存器时会用旧值覆盖掉
-  返回值。
-- `sepc` 必须 **+4**: `ecall` 是一条指令, 异常返回时 `sepc` 指向它自己, 不 +4
-  就会无限重复执行同一条 `ecall`。
+`dispatch`里与用户内存有关的三处调用:
 
-## 5. 测试
+| 调用 | 方向 | 用哪个校验 |
+|---|---|---|
+| `write` | 用户 -> 内核 | `copy_from_user` |
+| `read` | 内核 -> 用户 | `copy_to_user` |
+| `open` | 用户 -> 内核 (字符串) | `copy_str_from_user` |
 
-### 5.1 QEMU
+三者都要求"地址落在用户区 **且** 已映射"。只检查前者是提权漏洞, 只检查
+后者会让内核因用户地址未映射而崩溃
+
+## 测试
+
+### QEMU
 
 ```bash
 cargo xtask run --config riscv64-qemu-virt
 ```
 
-实现正确时, 会在串口上看到用户程序打印的这段:
+期望输出与上一个阶段相同 (用户程序通过SYS_HELLOWORLD打印固定字符串):
 
 ```
 proczero: hello world
 proczero: hello world
 ```
 
-**这几行文字来自用户态** —— 这是本阶段唯一的验收标准。
+**这段输出本身就是回归测试**: 它经过`write` -> `copy_from_user`这条路径,
+方向或边界校验写错, 这里会变成乱码或空白
 
-`write` / fd 表 / `copy_from_user` / `getpid` / fork / open 属于后续阶段
-(lab-5 / lab-6 / lab-9); 本阶段只证明用户态通路最基础的那一段。后续阶段的内容,
-本阶段不应该成功, 程序里已经对每一种失败都做了打印 (这样"哪一步还没铺路"一眼
-可见)。
+### 控制台输入
+
+目前Rust版还没有控制台输入路径 (没有UART接收中断的接线, `IER`一直是0),
+所以`read(0, ...)`按POSIX语义如实返回**0 (EOF)**, 而不是假装读到了数据或
+返回错误
+
+它不影响本阶段的验收 (验收看的是write那条路径的输出)
+
+**尾声**
+
+本次实验覆盖了三个层面:
+
+- 首先用汇编实现了上下文切换`switch`, 并打通了用户态和内核态之间的数据
+  迁移 (copy_from_user / copy_to_user)
+
+- 随后完善了用户态虚拟内存的管理: 堆、栈、mmap区域
+
+- 最后建立了完整的系统调用流程, 系统调用通道已经完备, 进程也只有一个
+
+经过本阶段的打磨, proczero的内存掌控能力和请求服务能力都更完善了,
+**下一个实验要解决的问题, 是让进程变多**
 
 ---
 
-## 6. 进阶目标（可选）
+## 7. 进阶目标（可选）
 
 下面三条**不属于基本验收**：默认流程与本分支 README 的期望输出都不依赖它们。
 它们的作用是把这一阶段的内核"做完整一点"——每条都只用到**本章已经给出的东西**，
@@ -161,69 +209,69 @@ proczero: hello world
 
 ---
 
-### 6.1 从"扁平映像"到 ELF 映像
+### 7.1 mmap：让用户自己申请内存
 
-**为什么值得做**：现在第一个用户程序是 `objcopy -O binary` 出来的**扁平映像**：
-`crates/kernel/build.rs` 把构建出来的用户程序扁平映像用 `include_bytes!` 嵌进内核，
-`crates/kernel/src/mm/uvm.rs` 的 `proc_make_user` 把它从 `USER_BASE` 起逐字节装入就跳过去，没有"段"的概念。
-真实的用户程序是 ELF——内核必须按 program header 逐段映射、按段设权限、把 `memsz > filesz` 的部分清零。从磁盘加载 ELF 是后面某一章的内容；这一章可以先把"解析 ELF"单独练一遍，数据来源是**内嵌的数组**（不需要文件系统）。
-
-**思路**：
-- 构建侧：`xtask/src/user.rs` 其实已经同时产出了 `<程序名>.stripped.elf`（它刻意用 `objcopy --strip-debug` 而不是 `--strip-all`，就是为了保住符号与段），改用这个产物即可；`crates/kernel/build.rs` 的嵌入清单跟着换。
-- 内核侧：新增的 `crates/kernel/src/proc/elf.rs`，写"内存里 ELF 的解析与校验"：魔数/类别/字节序/机器码、逐个 program header、
-  虚拟地址必须落在用户地址范围内、按段标志给出读/写/执行权限、`memsz > filesz` 的部分清零
-  （Rust 里没有 `memset`，用 `core::ptr::write_bytes` 或一个循环）。
-- 用 `crates/kernel/src/mm/pmem.rs` 的 `pmem_alloc(Pool::User)` 与 `crates/kernel/src/mm/vm.rs` 的 `map` 把每个段装进去；
-  入口由 ELF 头里的 `entry` 给出，不再假设"入口 = USER_BASE"——这正是 `user/arch/riscv64/user.ld.in` 顶部那段
-  "文件偏移必须等于虚拟地址偏移"的约束被解除的地方。
-- **所有偏移与长度都来自外来数据**，每一处都要边界检查（这是从磁盘加载 ELF 的预演）。
-- 别忘了 `crates/kernel/src/proc/user.rs` 里的 `.bss` 清零逻辑：ELF 路径下清零范围来自 `memsz`，不再是链接脚本符号。
-
-**怎么算做到**：换成 ELF 映像后 initcode 照常跑通；故意改坏一个段的虚拟地址或大小 → 被明确拒绝并给出原因，而不是跑飞。
-
-**涉及**：`crates/kernel/src/proc/user.rs`、`crates/kernel/src/proc/mod.rs`、`crates/kernel/build.rs`、`xtask/src/user.rs`、`user/arch/riscv64/user.ld.in`　**难度**：★★★
-
-### 6.2 第一个内核执行流（内核线程的雏形）
-
-**为什么值得做**："进程"现在只属于用户态，但真实内核里有只在内核里跑的执行流
-（idle、后台刷盘、解压 initramfs）。这一章的起点其实不低：
-`crates/kernel/src/proc/context.rs` 的 `Context::new`、`crates/kernel/src/proc/switch.rs` 的 `switch`、
-`crates/kernel/src/sched.rs` 的轮转都已经给出——但 `crates/kernel/src/main.rs` 是**直接** `enter_user()` 进用户态的，
-这台机器还没有为"一条只在内核里跑的执行流"转过一次。把它做出来，下一章的"内核线程"就只差"能被调度"这一步。
+**为什么值得做**：现在用户地址空间只有两段：`crates/kernel/src/proc/user.rs` 里 `USER_BASE` 开始的代码/数据一段、
+固定大小的 `USER_STACK_BASE` / `USER_STACK_SIZE` 一段。`mmap` 让用户程序能自己申请内存（堆、共享缓冲，"把文件映射进地址空间"的前置）。
+`crates/uapi/src/lib.rs` 里的系统调用枚举中**只有 `Syscall::Mmap = 9` 被标着"（扩展）"**：
+位置和语义都给你留好了，返回映射的起始地址；而内核侧 `crates/kernel/src/syscall.rs` 的 `dispatch` 现在还没有这一支（它要等"按需分页"才成立）。这是一条"照着 ABI 把缺口补上"的进阶目标。
 
 **思路**：
-- 用 `crates/kernel/src/proc/proc.rs` 的 `proc_alloc()` 拿进程槽与内核栈（它会把 `kstack_top` 填好），
-  但**不要**填 trapframe：这条执行流的入口是一个内核函数，不是从陷阱返回用户态。
-- `Context::new(入口地址, kstack_top)` 已经把"伪造一个第一次被调度的现场"这件事做好了；
-  用 `crates/kernel/src/proc/switch.rs` 的 `switch` 直接切过去，不经过 `pick_next_and_switch`。
-- 先让它跑完打印一行就停下（等待中断时用 `wfi`；仓库里现在是各处直接写内联汇编，顺手封装成一个统一的等待函数是个不错的附带收益），
-  `crates/kernel/src/main.rs` 里顺序调用一次即可。
-- 提前想清楚下一章会用到的两件事：上下文保存在 `Proc::context` 里、被切换回来时从 `Context::ra` 继续；
-  另外 `TrapFrame` 上那个"设置内核栈顶"的接口是给**用户态陷入**用的，内核执行流之间切换不经过它。
-- 注意这条执行流和 idle 进程的区别：idle 永远可运行、优先级最低，而它应该能跑完就结束——结束时的清理路径要自己写。
+- 校验先行：长度是否页对齐、是否超过上限、请求区间是否与既有映射重叠、是否落在用户地址范围内
+  （上界用 `crates/hal/src/platform/mod.rs` 的 `devices_base`，用户栈撞上 UART 那次事故就是没守这条线）。
+- 分配与映射用既有接口组合：`crates/kernel/src/mm/pmem.rs` 的 `pmem_alloc(Pool::User)` 拿到物理页 →
+  `crates/kernel/src/mm/vm.rs` 的 `map` 映射进**进程页表** → 返回虚拟地址。注意要用
+  `PageTable::from_root(...)` 把 `Proc::pgtbl` 包起来，别映射到内核页表上。
+- 地址参数为 0 时表示"内核挑一个地址"：建议在高地址区从下往上或从上往下找空洞。
+- **必须记下"哪些地址是 mmap 出来的"**（一张很小的区间表）：新增的 `crates/kernel/src/mm/vma.rs`，并在 `crates/kernel/src/proc/proc.rs` 的 `Proc` 上加一个字段。否则下一章的 fork 不知道该拷哪些页、
+  进程退出时不知道该回收哪些页——这一条是后面几章的前提。
+- Rust 版还要动 `Syscall` 的文档与 `from_raw` 的注释，让"9 号现在真的能用"这件事在 uapi 里也留下记录。
 
-**怎么算做到**：能打印出这条执行流自己的内核栈地址区间；它执行期间 `current_pid()` 指向它自己；
-它不返回用户态，也不踩启动流程的栈。
+**怎么算做到**：测试程序 mmap 一段、写入、读回都正确；越界访问触发缺页而不是静默写到别的页；
+空闲页数在 mmap 后减少、退出后回到基线（用 `pmem_stat()` 看）。
 
-**涉及**：`crates/kernel/src/proc/proc.rs`、`crates/kernel/src/proc/context.rs`、`crates/kernel/src/proc/switch.rs`、`crates/kernel/src/main.rs`　**难度**：★★☆
+**涉及**：`crates/kernel/src/syscall.rs`、`crates/uapi/src/lib.rs`、`crates/kernel/src/mm/vm.rs`、`crates/kernel/src/proc/proc.rs`　**难度**：★★☆
 
-### 6.3 HHDM：把物理内存线性映射到高半区
+### 7.2 用户栈与堆的增长
 
-**为什么值得做**：现在内核是**恒等映射**——虚拟地址等于物理地址（见 `crates/kernel/src/mm/vm.rs` 里关于恒等映射的那段说明），
-所以"物理地址 0x80200123"与"虚拟地址 0x80200123"在代码里长得一模一样，指针到底是哪种地址只能靠注释和记忆。
-真实内核把全部物理内存线性映射到一个高半区（HHDM），于是"物理页"永远通过"物理地址 + 偏移"访问，谁是物理地址一眼可辨。
-Rust 版还多一层收益：`crates/hal/src/arch/riscv64/mm.rs` 的 `PhysAddr` / `VirtAddr` / `PhysPageNum` 三个 newtype
-本来就是为这件事准备的——把转换写进类型，编译器能替你抓住大部分"忘了转换"的错误。
+**为什么值得做**：现在用户栈是固定大小（写满就撞到未映射区，缺页直接把进程干掉——
+`crates/kernel/src/trap.rs` 里那条 `page fault (demand paging not implemented)` 的注释正是它的现状）。
+真实内核对栈是"按需向下增长"的；堆则是"向上增长的第二个区间"。
+这条让你第一次面对"缺页不是错误，而是'该给页了'的信号"。
 
 **思路**：
-- 链接脚本 `crates/kernel/linker/smode.ld.in` 改成把内核放到高半区。注意它的链接地址来自 `configs/*.toml` 的 `kernel_load_addr`
-  并由 `crates/kernel/build.rs` 注入——先把"加载地址"与"链接地址"是两个概念这件事想清楚，再动脚本。
-- 入口先建**两份映射**（一份恒等、一份高半区），跳到高地址之后再撤掉恒等映射——这是经典的 higher-half 引导流程；
-  `crates/hal/src/arch/riscv64/boot.rs` 的汇编里现在就用 `la sp, boot_stacks` 建栈，栈指针也得跟着搬到高半区。
-- 定义偏移常量与两个转换函数（物理↔虚拟），并规定：凡是"物理页号/物理地址"，使用前必须转换。
-- 页表接口的语义要写清楚：页表里存的是**物理**地址，翻译接口返回的也是物理地址——高半区之后这条约定更容易被误用。
-- 这是本章最伤筋动骨的一条：会影响后面每一处指针运算。建议分三步走、每步都能跑：① 内核镜像上高半区；② 全内存线性映射；③ 把分配器、设备映射、页表代码改成用转换函数。
+- 在 `crates/kernel/src/trap.rs` 的用户态缺页处理里区分两种情况：故障地址**落在允许增长的栈区**（在 `USER_STACK_BASE` 下方、且没有超过增长上限）→ 分配一页、映射进去、记下新的栈底、返回用户态重试；
+  其它地址 → 视为非法访问，按"用户程序出错"终止它（而不是让内核 panic）。
+- 判断依据是**故障地址**（`crates/hal/src/arch/riscv64/trap.rs` 的 `last_fault_address()`，或 `TrapFrame` 里的 `stval`），
+  不是触发指令的地址——这是缺页处理最容易搞错的一点。
+- 重试要"什么都不改地返回"：缺页的那条指令必须被重新执行，所以**不要**去动 `sepc`（系统调用那条路径要 `+4`，别把两者搞混）。
+- 一定要设增长上限（否则等于给了用户一把无限增长的刀），并在超限时给出明确错误。
+- 堆可以用一个"设置堆顶"的系统调用（同时改 `crates/uapi/src/lib.rs` 与 `crates/kernel/src/syscall.rs`），
+  或者直接用 7.1 的 mmap + 懒分配实现。
+- 缺页发生在陷阱上下文里：分配失败要能体面地失败，不能死循环重试同一条指令。
 
-**怎么算做到**：内核跑在高半区（打印一个内核函数地址，高位全 1）；物理↔虚拟转换往返一致；设备仍可访问（串口输出正常）；`git grep` 里不再有"裸物理地址直接当指针用"的地方（引导早期除外）。
+**怎么算做到**：一个递归很深、或在栈上开大数组的测试程序能跑过原来会崩的深度；
+超过上限时进程被明确终止并打印原因，内核不受影响。
 
-**涉及**：`crates/kernel/linker/smode.ld.in`、`crates/hal/src/arch/riscv64/boot.rs`、`crates/kernel/src/mm/vm.rs`、`crates/kernel/src/mm/pmem.rs`、`crates/hal/src/arch/riscv64/mm.rs`　**难度**：★★★
+**涉及**：`crates/kernel/src/trap.rs`、`crates/kernel/src/mm/vm.rs`、`crates/kernel/src/proc/user.rs`、`crates/kernel/src/mm/pmem.rs`　**难度**：★★★
+
+### 7.3 统一地址空间管理与 lazy-alloc
+
+**为什么值得做**：7.1 的 mmap 是"立刻给页"，7.2 的栈增长是"缺页时给页"——两件事本质相同却各写一遍。
+真实内核用**一张区间表（VMA）+ 页表**描述地址空间：申请时只登记区间，真正访问时才给页（lazy）。
+这张表也是下一章的进程复制、以及后面文件映射的共同地基。
+Rust 版还有一个额外约束：内核里还没有堆，所以这张表必须是**固定长度的数组**——这反而让它更接近真实内核的取舍。
+
+**思路**：
+- 定义"区间"：起始、长度、权限、类型（代码/数据/栈/mmap/文件映射），用一张有序表挂在 `Proc` 上（几十项足够）。
+  落点是新增的 `crates/kernel/src/mm/vma.rs`；类型用 enum 表达，让 `match` 逼着你把每种区间都处理到。
+- 把三处入口统一到这张表上：mmap 只登记、栈增长往表里更新栈底、缺页处理统一"查表 → 决定给页还是报错"。
+- 分配失败必须能回退（内存耗尽时杀掉进程而不是死循环）；同一条指令可能反复触发缺页，重试必须幂等。
+- 为下一章预留：**进程复制 = 复制这张表 + 复制页内容**。框架里 `crates/kernel/src/proc/proc.rs` 的 `proc_copy`
+  与 `crates/kernel/src/mm/uvm.rs` 的 `copy_user_space` 目前给的是"逐页真实拷贝"（下一章会把它们清空、交回给你重写）——
+  区间表接进去之后，拷贝才有"只拷该拷的页"的依据；写时复制先别急。
+- 边界想清楚：区间之间的空洞、相邻区间的合并、以及"表满了"时的返回路径。
+
+**怎么算做到**：mmap 之后空闲页数不变，访问第一页之后才减少；访问第 3 页只多分配 1 页（用 `pmem_stat()` 验证）；超出任何区间的访问仍然被拒；`proc` 相关打印里能看到这个进程的区间表。
+
+**涉及**：`crates/kernel/src/mm/vm.rs`、`crates/kernel/src/proc/proc.rs`、`crates/kernel/src/trap.rs`、`crates/kernel/src/mm/pmem.rs`　**难度**：★★★
