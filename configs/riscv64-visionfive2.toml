@@ -1,0 +1,4 @@
+arch = "riscv64"
+platform = "visionfive2"
+load = 0x40200000
+ncpu = 4

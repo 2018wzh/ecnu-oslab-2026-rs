@@ -1,0 +1,15 @@
+[package]
+name = "oslab-kernel"
+version.workspace = true
+edition.workspace = true
+[dependencies]
+oslab-hal = { path = "../hal" }
+oslab-drivers = { path = "../drivers" }
+[features]
+qemu-virt = ["oslab-hal/qemu-virt"]
+visionfive2 = ["oslab-hal/visionfive2"]
+[[bin]]
+name = "oslab-kernel"
+path = "src/main.rs"
+test = false
+bench = false

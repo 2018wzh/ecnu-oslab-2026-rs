@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = ["crates/hal", "crates/drivers", "crates/kernel", "xtask"]
+default-members = ["xtask"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[profile.dev]
+panic = "abort"
+[profile.release]
+panic = "abort"
+debug = true
+opt-level = 2

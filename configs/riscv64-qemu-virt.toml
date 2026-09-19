@@ -1,0 +1,4 @@
+arch = "riscv64"
+platform = "qemu-virt"
+load = 0x80200000
+ncpu = 2
