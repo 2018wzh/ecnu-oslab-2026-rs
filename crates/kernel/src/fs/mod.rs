@@ -1,3 +1,6 @@
+pub mod inode;
+pub mod dentry;
+mod lab8_examples;
 pub mod block;
 pub mod tokens;
 pub mod buffer;
@@ -20,4 +23,8 @@ impl Superblock {
 }
 // TODO(lab-7): tokens::init 单次初始化教师令牌外围。
 // TODO(lab-7): 首进程上下文初始化 buffer，读块 0，LE 解码并校验布局，打印信息。
-pub fn init() { todo!("lab-7: fs::init") }
+pub fn init() {
+    todo!("lab-7: fs::init");
+    // TODO(lab-8): 前序初始化完成后，在合适位置调用 inode::init。
+    lab8_examples::lab8_examples(); // 末尾，仅可睡眠的首进程上下文，默认关闭。
+}
