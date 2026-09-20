@@ -25,4 +25,12 @@ impl Uart {
         }
         self.write(0, c);
     }
+    pub fn getc(&self) -> Option<u8> {
+        // SAFETY: 构造时保证 MMIO 窗口有效，LSR/RHR 为只读访问。
+        unsafe {
+            if core::ptr::read_volatile((self.base + (5 << self.shift)) as *const u8) & 1 == 0 { None }
+            else { Some(core::ptr::read_volatile(self.base as *const u8)) }
+        }
+    }
+    pub fn enable_rx(&self) { self.write(1, 1); }
 }

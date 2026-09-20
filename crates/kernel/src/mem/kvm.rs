@@ -19,7 +19,7 @@ pub unsafe fn mappages(_root: PageTable, _va: usize, _pa: usize, _len: usize, _p
 // 解除缺失映射 panic；清除叶项，可选归还普通池数据页，不回收中间页表。
 pub unsafe fn unmappages(_root: PageTable, _va: usize, _len: usize, _free_pages: bool) { todo!("lab-2: unmappages") }
 // TODO(lab-2): 建立代码 RX、只读区 R、数据与可分配区 RW、UART 和 PLIC RW 的映射。
-// 不设置 U，不映射固件保留区；CLINT 由固件负责，本章不实现中断驱动。
+// 不设置 U，不映射固件保留区；CLINT 由固件负责，PLIC 映射沿用 lab-2，中断驱动由 trap 模块使用。
 pub fn init() { todo!("lab-2: kvm::init") }
 pub fn init_hart() {
     // SAFETY: 主核发布初始化结果后，每核调用；ROOT 包含代码和每核栈。
