@@ -1,4 +1,7 @@
 pub mod inode;
+pub mod file;
+pub mod path;
+pub mod device;
 pub mod dentry;
 mod lab8_examples;
 pub mod block;
@@ -26,5 +29,5 @@ impl Superblock {
 pub fn init() {
     todo!("lab-7: fs::init");
     // TODO(lab-8): 前序初始化完成后，在合适位置调用 inode::init。
-    lab8_examples::lab8_examples(); // 末尾，仅可睡眠的首进程上下文，默认关闭。
+    // TODO(lab-9): 调用 file::init 和 device::init。
 }

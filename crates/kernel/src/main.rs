@@ -3,6 +3,8 @@
 // 教学框架的接口在学生完成任务前允许暂未使用。
 #![allow(dead_code)]
 mod console;
+mod console_input;
+mod elf;
 mod print;
 mod panic;
 mod lock;

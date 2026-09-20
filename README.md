@@ -1,29 +1,64 @@
-# LAB-8: 文件系统 之 数据组织与层次结构
+# LAB-9: 文件系统 之 文件管理与全系统整合
 
 **前言**
 
-在lab-7中我们实现了block-level的磁盘管理能力
+恭喜你完成了前8次实验, 来到最后一个关卡
 
-在此基础上, 本次实验将进一步考虑以下两个问题:
+最后一个实验的内容比较多, 难度也比较大, 既是实验也是测验
 
-1. 如果数据块的大小大于1个block, 如何组织和管理? (inode)
+- 测验你对整个系统的理解：内存、进程、文件系统、用户态程序等
 
-2. 如何用人类更好理解的层次结构来组织和索引海量数据块? (dentry)
+- 测验你的编码与调试能力：文件操作、路径操作、ELF解析、系统调用等
+
+不用担心, 助教会屏蔽大部分繁琐但不重要的工作, 并梳理实验脉络
+
+这大概要花费你好几天时间, 现在就开始吧!
 
 ## 代码组织结构
 
 ```
 ECNU-OSLAB-2026-RS
-├── pictures       README使用的图片目录 (CHANGE)
-├── README.md      实验指导书 (CHANGE)
 ├── crates
-│   ├── kernel/src/fs
-│   │   ├── inode.rs (TODO, 核心工作)
-│   │   ├── dentry.rs (TODO, 核心工作)
-│   │   ├── mod.rs (TODO, 增加inode初始化逻辑和测试用例)
-│   │   └── lab8_examples.rs (NEW, 测试用例)
-│   └── uapi/src/disk.rs (CHANGE, 磁盘结构常量)
-└── xtask/src/disk.rs (CHANGE, 带根目录的磁盘映像)
+│   ├── kernel/src
+│   │   ├── console_input.rs 行缓冲输入 (NEW)
+│   │   ├── elf.rs          ELF装载辅助 (NEW)
+│   │   ├── mem
+│   │   │   ├── pmem.rs     空闲页统计 (TODO)
+│   │   │   └── uvm.rs      用户堆权限 (TODO)
+│   │   ├── trap
+│   │   │   └── mod.rs      串口输入处理 (CHANGE)
+│   │   ├── proc
+│   │   │   ├── mod.rs      进程结构 (CHANGE)
+│   │   │   ├── files.rs    文件与工作目录 (TODO)
+│   │   │   ├── lifecycle.rs 进程生命周期 (TODO)
+│   │   │   ├── schedule.rs 首进程初始化 (TODO)
+│   │   │   └── exec.rs     执行ELF文件 (TODO)
+│   │   ├── syscall
+│   │   │   ├── mod.rs      系统调用分派 (TODO)
+│   │   │   └── file.rs     文件系统调用 (TODO)
+│   │   └── fs
+│   │       ├── dentry.rs   目录项操作 (TODO)
+│   │       ├── path.rs     路径操作 (TODO)
+│   │       ├── file.rs     文件操作 (TODO)
+│   │       ├── device.rs   设备文件 (TODO)
+│   │       └── mod.rs      文件系统初始化 (TODO)
+│   └── uapi/src
+│       └── lib.rs         系统调用编号与类型 (CHANGE)
+├── xtask/src
+│   └── disk.rs            导入用户程序 (CHANGE)
+└── user
+    ├── arch/riscv64
+    │   ├── user.ld         初始用户程序链接脚本
+    │   └── elf.ld          ELF程序链接脚本 (NEW)
+    └── src
+        ├── syscall.rs     系统调用封装 (CHANGE)
+        ├── test.rs        测试辅助函数 (NEW)
+        └── bin
+            ├── init.rs    启动测试程序 (CHANGE)
+            ├── test_1.rs  测试点 (NEW)
+            ├── test_2.rs  测试点 (NEW)
+            ├── test_3.rs  测试点 (NEW)
+            └── test_4.rs  测试点 (NEW)
 ```
 
 **标记说明**
@@ -34,544 +69,319 @@ ECNU-OSLAB-2026-RS
 
 **TODO**: 你需要实现新功能 / 你需要完善旧功能
 
-## mkfs: 带根目录的初始磁盘映像
+## 第1步: 准备工作
 
-lab-7的初始磁盘映像虽然有inode_bitmap和inode_region, 但是并不存在真正的inode
+1. 阅读**crates/hal/src/arch/riscv64/kernel.ld.in**、**user/arch/riscv64/user.ld**和**user/arch/riscv64/elf.ld**, 比较内核、初始用户程序和ELF程序的链接布局
 
-在本次实验中, 我们首先添加了根目录 (root_inode)
+2. 在**crates/kernel/src/mem/pmem.rs**中实现`pmem::stat`, 用于获取当前的可用内存情况
 
-随后, 在根目录之下增加了四个目录项:
+3. 修改**crates/kernel/src/mem/uvm.rs**中的`uvm::heap_grow`, 根据输入的flags设置内存区域的权限, 使ELF各段可以使用各自的读写执行权限
 
-- "." 和 "..": 特殊目录项, 用于描述相对路径, 本次实验不展开描述
+4. 为了支持行缓冲的输入, 我们在**crates/kernel/src/console_input.rs**中实现了行编辑和读取逻辑。请你阅读**crates/kernel/src/trap/mod.rs**, 理解它如何初始化输入缓冲区, 并将串口中断收到的字符交给`console_input::edit`处理
 
-- "ABCD.txt" 和 "abcd.txt": 循环写入字母表(大写版本和小写版本)的普通文件
+5. 阅读 **user/src/** 中的各个源文件, 理解它们的组织架构和测试流程
 
-请你阅读`crates/uapi/src/disk.rs`和`xtask/src/disk.rs`来理解初始化过程的具体行为, 这将帮助你理解**inode**和**dentry**的概念
+6. 阅读**xtask/src/user.rs**和**xtask/src/disk.rs**, 理解各个测试程序如何写入**disk.img**
 
-## inode: 文件数据组织
+## 第2步: 完善文件系统 (fs)
 
-从磁盘角度来看, 文件就是由N个block构成的逻辑单元
-
-inode负责记录这样的逻辑结构, 主要依靠**index**字段和**size**字段
-
-**index字段的设计分成三个部分:**
-
-- 0 ~ INODE_INDEX_1 - 1: 直接映射(index[i] = data_block), 控制前面40KB空间 (小型文件)
-
-- INODE_INDEX_1 ~ INODE_INDEX_2 - 1: 一级间接映射(index[i] = index_block), 控制中间8MB空间 (中型文件)
-
-- INODE_INDEX_2 ~ INODE_INDEX_3 - 1: 二级间接映射(index[i] = index_index_block), 控制后面4GB空间 (大型文件)
-
-**这样设计的好处是:**
-
-- 小型文件的访问非常迅速 (直接访问inode就能直接获得data_block序号)
-
-- 能支持很大的文件 (以1个index_index_block和1024个index_block的额外访问开销为代价)
-
-- 中型文件的访问代价可控 (以2个index_block的额外访问开销为代价)
-
-**和之前的内核页表设计进行对比:**
-
-- index是各个文件的私有映射逻辑, 内核页表是系统全局的映射逻辑, 因此内存页面不存在前面热后面冷的性质
-
-- 因此, 页表是确定的三级间接映射, 文件映射则是直接映射、一级间接映射、二级间接映射相结合(按需启用)
-
-**关于size字段(单位是字节)的说明:**
-
-- 对于**INODE_DATA**类型的inode, size除了代表有效的数据量, 还代表[0, size)的逻辑空间已经使用 (没有空洞)
-
-- 对于**INODE_DIR**类型的inode, 我们假设它只使用1个block(index[0]记录), size只代表有效数据量 (接受空洞)
-
-**当你完全理解上述逻辑后, 我们开始进入具体的函数 (in inode.rs)**
-
-首先阅读帮助函数`InodeGuard::free_blocks`, 实现它调用的`free_block_tree`和`InodeGuard::locate_or_add_block`
-
-`InodeGuard::free_blocks`本质是通过`bitmap::free_block`释放inode管理的所有block资源
-
-考虑到树形组织结构, 我们使用递归方法来实现这一点 (调用`free_block_tree`)
-
-注意: 起到索引作用的index_block和index_index_block也要释放
-
-`InodeGuard::locate_or_add_block`负责将逻辑块号转译为物理块号 (例:inode的第一个逻辑块0对应物理块1120)
-
-转译过程中可能遇到目标逻辑块号恰好超过边界 (例:分配了N个逻辑块, 目标逻辑块号为N)
-
-这种时候需要新分配一个物理块, 使得目标逻辑块号合法
-
-比较复杂的情况: 新增data_block可能带来连锁反应 (新增index_index_block和新增index_block)
-
-这一点和页表的生长过程是类似的, 需要你细心和谨慎地处理
-
-之后实现数据流读写逻辑`InodeGuard::read_data`和`InodeGuard::write_data`
-
-它们的共同点在于: 以1个buffer为中间载体, 实现数据在磁盘块和通用内存空间之间的流转
-
-读写参数分别用`ReadDst`和`WriteSrc`表示。内核缓冲区传入切片, 用户缓冲区则传入`UserAddr`和长度, 通过前章的用户内存复制接口访问。
-
-需要注意的一点: 写入逻辑可能涉及inode的修改 (包括index和size), 文件大小不能超过INODE_MAX_SIZE (size为32位无符号数, 最多表示4294967295字节)
-
-## inode: 生命周期管理
-
-我们使用**CACHE**来管理内存中的inode资源, 通过**CACHE_LOCK**来保护它
-
-这种组织结构在`mmap`、`proc`、`buffer`等地方多次遇到, 这里也是类似的 (只是没有选择使用双向循环链表做加速)
-
-请你完成`inode::init`来初始化资源, 并放入`fs::init`的合适位置
-
-下一个需要思考的问题是: **inode in disk** 与 **inode in memory**的区别与互相更新
+**2.1 在lab-8中实现了dentry和path的部分函数，我们先进行补全**
 
 ```rust
-/* 磁盘上的索引节点字段(按64字节格式编解码) */
-pub struct DiskInode {
-    pub kind: u16,                   // 文件类型
-    pub major: u16,                  // 主设备号
-    pub minor: u16,                  // 次设备号
-    pub nlink: u16,                  // 链接数
-    pub size: u32,                   // 文件数据长度(字节)
-    pub index: [u32; 13],            // 数据存储位置(10+2+1)
-}
-
-/* 内存里的索引节点 */
-pub struct Inode {
-    info: DiskInode,                 // 持久化信息 (lock保护)
-    number: u32,                    // inode序号 (活跃引用期间不变)
-    refs: usize,                    // 引用数 (CACHE_LOCK保护)
-    valid: bool,                    // info的有效性 (lock保护)
-    lock: SleepLock,                // 睡眠锁
-}
+// in dentry.rs, 以下列出接口签名
+pub fn search_number(dir: &mut InodeGuard<'_>, number: u32, name: &mut [u8; NAME_BYTES]) -> Result<u32, ()>; // 基于inode_num搜索name
+pub fn transmit(dir: &mut InodeGuard<'_>, dst: ReadDst<'_>) -> Result<usize, ()>; // 传输有效目录项
+// in path.rs
+pub fn inode_to_path(inode: &InodeRef, dst: &mut [u8]) -> Result<usize, ()>; // 与resolve相反的解析过程
+pub fn create(path: &[u8], kind: u16, major: u16, minor: u16) -> Result<InodeRef, ()>; // 创建新的inode
+pub fn link(old: &[u8], new: &[u8]) -> Result<(), ()>; // 建立硬链接
+pub fn unlink(path: &[u8]) -> Result<(), ()>; // 解除硬链接
 ```
 
-相比**DiskInode**, **Inode** 增加了四个字段:
+前两个函数相对简单, 你可以参考之前实现的`dentry::search`和`dentry::print`来做, 核心操作都是目录项遍历
 
-- valid: CACHE miss后返回的空闲inode, 它的info是无效的, 需要特殊标记
+`path::inode_to_path`相对复杂, 它的作用是获取某个inode(目录类型)的绝对路径, 也就是从某个节点开始回溯到树根节点
 
-- refs: CACHE中的inode可以被多个使用者关注, 需要记录一下引用数
+我们知道, 正向查找 (`dentry::lookup`) 的理论依据是`dentry::search`操作进行文件名匹配
 
-- number: 进行**DiskInode**和**Inode**的互相更新时, 需要知道磁盘中的inode位置
+对应的, 逆向查找 (`path::inode_to_path`) 的理论依据是之前埋好的`..`目录项, 它对应的inode_num就是上级节点的inode_num
 
-- lock: 保证资源的按需共享, 由于磁盘读写非常耗时, 所以采用睡眠锁而非自旋锁
+注意: 由于采用逆向填充方法, 所以缓冲区的使用也是从后往前的, 返回偏移量 (**dst[offset..]**才是包含末尾NUL的绝对路径字符串)
 
-之后请你实现`InodeGuard::rw`完成磁盘inode_region中的inode和内存CACHE中的inode的互相更新。磁盘字段按固定偏移用小端格式读写, 不直接复制内存结构体。
+下一个需要实现的函数是`path::create`, 它基于目标路径来创建新的inode, 包括inode的申请和目录项的创建等
 
-- 初始化时: 通常是 磁盘->内存 的更新流 (读入一个新的inode)
+在之前的假设中, 一个inode只对应一个绝对路径, 这可能带来一些不方便:
 
-- 修改时: 通常是 内存->磁盘 的更新流 (inode中的字段做了修改, 需要写回)
+假设一个你经常使用的文件处于很深的绝对路径中, 打开它就变得麻烦了
 
-下面实现典型的inode生命周期控制函数 (按照从生到死的过程)：
+为了解决这个问题, 我们引入了硬链接的方法: 一个inode可以对应多个绝对路径 
 
-- `inode::create`: 认为某个inode原本不存在, 先在内存里创建副本, 之后写入inode_region
+/AAA/BBB/CCC/DDD/hello.txt 对应 inode-23, /link.txt 也对应 inode-23
 
-- `inode::get`: 认为某个inode存在于内存CACHE或者磁盘inode_region, 获取使用权
+实现这一点只需要做两件事: (1) inode-23.nlink++ (2) 在根目录下增加一条dentry {link.txt, 23}
 
-- `InodeRef::dup`: 复制inode使用权 (例如执行fork操作时)
+对应的, unlink操作也完成两件事: (1) inode.nlink-- (2) 删除一条dentry
 
-- `InodeRef::lock`: 获取睡眠锁并返回InodeGuard, 以保证独占inode
+它还需要考虑一个问题: inode的资源释放 (当nlink减到0, 意味着用户无法通过路径方法访问这个inode, 等最后一个引用释放后才能回收它)
 
-- `InodeGuard::drop`: 释放守卫时解锁, 以支持共享inode
+资源释放的判断逻辑, 我们在`InodeRef`的`Drop`中已经实现了, 这里不必显式执行`InodeGuard::delete`操作
 
-- `InodeRef::drop`: 释放引用时减少refs, 可能触发inode的磁盘删除操作
+理解这些部分后, 请你动手实现 `path::link` 与 `path::unlink`
 
-- `InodeGuard::delete`: 删除磁盘里的某个inode, 并释放它管理的data_block资源
+**2.2 补全了dentry.rs和path.rs中的函数后, 我们正式引入文件的抽象**
 
-最后, 我们提供了`InodeGuard::print`函数来输出某个inode的具体信息
+你可能听过一句话: Linux秉持一切皆文件的设计哲学; 下面详细讨论"文件"的定义与实现方法
 
-## dentry: 从数字索引到字符串索引
+```rust
+pub struct File {
+    inode: Option<InodeRef>, // 对应的inode
+    refs: usize,            // 引用数 (TABLE_LOCK保护)
+    offset: u32,            // 读/写指针的偏移量
+    readable: bool,         // 是否可读
+    writable: bool,         // 是否可写
+}
 
-**有了inode的文件系统世界是什么样的呢?**
-
-- 我们可以先用**inode_num**搜索**inode_region**, 找到某个inode (定位元数据)
-
-- 再通过inode里的索引信息, 按照逻辑顺序找到它管理的若干**block** (定位数据)
-
-对于计算机来说, 这套逻辑已经足够高效了, 它建立了从数字到离散数据流的映射关系
-
-对人来说, 还存在一个致命的问题:**inode_num**太抽象了, 人类很难记住它的含义, 人更好理解的是**name**
-
-我们可以把 **name=hello.c** 理解为一个"hello world"程序, 但是不能把 **inode_num=15** 理解成任何东西
-
-**因此, 我们决定增加一层映射逻辑: name -> inode_num**
-
-```text
-目录项(64 Byte):
-    name: [u8; NAME_BYTES]          // 文件名, 占前60字节
-    inode_num: u32                 // 索引节点序号, 占后4字节, 小端编码
+pub static mut TABLE: [File; N_FILE] = [const { File::EMPTY }; N_FILE]; // 文件资源池
+pub static TABLE_LOCK: SpinLock = SpinLock::UNINIT; // 保护它的锁
 ```
 
-更具体的设计方案:
+除了inode引用, 文件还包括读写权限字段、读写指针偏移量字段、引用数字段
 
-- 我们将第一个inode设为**根节点**, 记住它的inode_num为**ROOT_INODE(0)**
+其中读写权限字段在文件开始时设置、偏移量字段在文件读写时设置、引用数字段在文件打开关闭复制时设置
 
-- 根节点包括 `BLOCK_SIZE/64` 个**dentry槽位**
+值得注意的是, 不同于inode、buffer等全局共享资源; 对于进程来说, 文件提供了一种独占inode资源的假象
 
-- 其他inode都通过注册1个dentry链接到根节点上, 形成**1-N**的二层树形结构
+文件的读写权限在打开时设置。fork和dup会共享同一个file, 因此读写普通文件时, 应先取得inode锁, 等数据传输和offset更新完成后再解锁。移动偏移量和读取文件状态时也使用这把锁, 引用数则由全局的TABLE_LOCK保护
 
-- 查找逻辑从: inode_num->数据 变成了 ROOT_INODE->name->inode_num->数据
+我们可以梳理一下file与inode的区别: 
 
-用户只需要记住根节点的inode序号和目标inode的名称即可, 不需要知道目标inode的序号
+- file是由进程持有、可经fork/dup共享的、具备动态语义的、字段不做持久化存储的 数据集合管理者
 
-请你实现dentry的槽位管理逻辑:
+- inode是全局共享的、记录文件数据和元信息的、部分字段进行持久化存储的 数据集合管理者
 
-- `dentry::search`: 在目录中查找某个dentry, 找不到时返回Err(()), 不能用合法的根目录编号0表示失败
+理解上述概念后, 请你实现一系列文件相关的函数
 
-- `dentry::create`: 创建1个新的dentry
+```rust
+// in file.rs, 以下列出接口签名
+pub fn init(); // 初始化TABLE和锁
+pub fn alloc() -> Result<FileRef, ()>; // 获取空闲file
+pub fn open(path: &[u8], mode: usize) -> Result<FileRef, ()>; // 打开文件(注意打开模式)
 
-- `dentry::delete`: 删除1个旧的dentry
+// FileRef的方法
+pub fn read(&self, dst: ReadDst<'_>) -> Result<usize, ()>; // 读取文件
+pub fn write(&self, src: WriteSrc<'_>) -> Result<usize, ()>; // 写入文件
+pub fn seek(&self, offset: u32, whence: usize) -> Result<u32, ()>; // 读写指针移动
+pub fn dup(&self) -> Self; // 复制文件使用权
+pub fn stat(&self) -> Result<oslab_uapi::FileStat, ()>; // 获取文件状态
+```
 
-我们还提供了一个`dentry::print`用于打印某个目录下的所有有效dentry (目录项的第一个名称字节不为0说明有效)
+`FileRef`持有一个文件引用, 关闭文件的逻辑在它的`Drop`中实现。读写缓冲区沿用lab-8的`ReadDst`和`WriteSrc`, 用户地址仍通过页表复制
 
-## path: 从扁平化到层次化
+在实现这些函数的过程中, 你应该注意到: `FileRef::read` 和 `FileRef::write` 需要用到match做分类处理
 
-**1-N**的扁平化树形结构在inode数量较小时是好用的
+file type 与 inode type 是匹配的, 分成: 数据文件(流式)、目录文件（结构化）、设备文件（特殊定义）
 
-随着inode数量的增长: 一方面, 根节点的槽位不够用; 另一方面, 不方便人做分类查找和管理
+**2.3 数据文件和目录文件我们比较熟悉了, 下面重点介绍设备文件的情况**
 
-因此, 我们要将扁平化的树拓展为层次化的树, 支持`1-N-M-K...`的多层结构
+在我们的设计中, 设备文件的分类只使用主设备号**InodeGuard::info().major**, 次设备号都使用**default**
 
-管理这样的结构需要多个目录类型的inode (仅靠根节点是不够的)
+设备文件的核心特性是支持**读写**操作, 不同于另外两种文件的读写都是在磁盘上进行的
 
-描述树上的一个节点需要使用"文件路径(path)", 本次实验我们只考虑绝对路径
+设备文件的读写操作是可以灵活定义的, 我们定义了六种设备文件:
 
-例如: /AAA/BBB/CCC/file.txt、/AABB/CC、////AAA///CC//BB/file.txt等
+- **/dev/stdin**: 标准输入 (行缓冲), 可读
 
-以/AAA/BBB/CCC.txt为例, 解释**路径解析**过程:
+- **/dev/stdout**: 标准输出, 可写
 
-- step-0: 通过ROOT_INODE(0)获得root_inode
+- **/dev/stderr**: 标准错误输出 (前置输出“ERROR”), 可写
 
-- step-1: 查询root_inode的dentry槽位, 发现"AAA"对应的inode_num为A1
+- **/dev/zero**: 零文件 (可以读到任意多的零字节), 可读
 
-- step-2: 通过A1获得AAA_inode
+- **/dev/null**: 黑洞文件 (读到的字节数永远是0, 写入多少字节都可以), 可读可写
 
-- step-3: 查询AAA_inode的dentry槽位, 发现"BBB"对应的inode_num为B1
+- **/dev/gpt0**: 小彩蛋 (可以回答预设问题的笨蛋版本GPT), 可写
 
-- step-4: 通过B1获得BBB_inode
+这六种设备文件的读写函数已经给出, 你需要实现下面的功能:
 
-- step-5: 查询BBB_inode的dentry槽位, 发现"CCC.txt"对应的inode_num为C1
+```rust
+// in device.rs, 以下列出接口签名
+pub fn init() -> Result<(), ()>; // 初始化DEVICE_TABLE, 保证各个设备文件/dev/xxx在磁盘中存在
+pub fn open_check(major: u16, mode: usize) -> bool; // 检查设备文件是否存在及打开权限的合法性
+pub fn read(major: u16, dst: &mut [u8]) -> Result<usize, ()>; // 读接口
+pub fn write(major: u16, src: &[u8]) -> Result<usize, ()>; // 写接口
+```
 
-- step-6: 通过C1获得CCC_inode, 进行后续的读写行为
+注意: `device::init`和`file::init`应该在`fs::init`中被调用
 
-我们提供了`dentry::element`来逐步处理**path**和提取**name**, 请你先理解它的工作逻辑。Rust中的路径用不带结尾NUL的字节切片表示
+## 第3步: 进程与文件系统 (proc/files.rs、lifecycle.rs、schedule.rs)
 
-你需要利用`dentry::element`、`inode::get`、`dentry::search`等函数来实现`dentry::resolve`
+完成文件系统的补全工作后, 我们进一步讨论进程模块与文件系统模块的协作
 
-这个函数完成了从**path**到**目标inode**的翻译过程, 是`dentry::lookup`和`dentry::parent`的底层
+首先关注进程结构体中的打开文件表字段`files`和当前工作目录字段`cwd`
+
+前者记录当前进程打开的文件引用, 后者记录了当前进程**站在**文件系统树中的哪个位置
+
+我们需要修改哪些地方以支持这两个字段的生命周期呢?
+
+- `lifecycle::init`和`lifecycle::slot_alloc`: 初始化资源(设为None)
+
+- `schedule::first_return`: 对于新生的proczero, 在文件系统初始化后调用`files::init`, 设置files(依次打开stdin stdout stderr)和cwd(设为根目录)
+
+- `lifecycle::fork`: 对于其他进程, 调用`files::clone`继承父进程的files和cwd(FileRef::dup + InodeRef::dup)
+
+- `lifecycle::free`: 关闭文件并释放cwd引用, 将相应字段设为None
+
+关闭文件可能触发磁盘操作, 因此不能持着自旋锁关闭最后一个引用。请你按照`lifecycle.rs`中的提示, 在进程锁内标记正在回收并取出files和cwd, 解锁后释放这些引用, 再重新加锁完成回收。分配和等待进程时也要检查这个标记, 避免其他核同时使用正在回收的槽位
+
+和我们之前说的一样, 你会发现文件的生命周期与进程的生命周期是高度吻合的
+
+支持cwd字段使得相对路径 (如./hello.txt or hello.txt or ../hello.txt) 变得可能 (区别于以`/`开头的绝对路径)
+
+对应的, 请你修改路径解析函数 `dentry::resolve` 以支持基于相对路径搜索inode
+
+## 第4步: 执行ELF文件 (proc/exec.rs)
+
+首先思考一下只有fork的OS内核是什么样的?
+
+我们实现了user/src/bin/init.rs, 其他进程通过fork产生, 内容上和proczero没什么区别...
+
+为了实现丰富多彩的用户软件, 只有fork是不够的, 我们还要有执行ELF文件的能力
+
+ELF文件是编译链接的最终产物, OS内核读取和解析ELF文件, 在复制品的壳子上构建全新的血肉 (fork + exec)
+
+ELF文件的组织结构通常是: [ELF_header | Program_header | seg-1 | seg-2 | ... | Section_header]
+
+其中ELF_header描述了全局的情况 (类似Superblock), Program_header描述了各个segment的情况 (类似inode region)
+
+接下来我们讨论如何实现非常重要的函数`exec::exec`
+
+- step-0: 准备全新的pagetable和trapframe (为了防止中途崩溃, 我们不能直接修改旧的)
+
+- step-1: 解析输入的文件路径, 获取ELF文件的inode
+
+- step-2: 读取ELF_header, 其中**对Program_header的描述字段**和**ELF程序入口地址**是我们关心的
+
+- step-3: 按照顺序读取需要载入内存的Segment, 填充到用户堆区域 (`prepare_heap`)
+
+- step-4: 释放ELF的inode
+
+- step-5: 处理输入的参数列表**argv**, 填充到用户栈区域 (`prepare_stack`)
+
+- step-6: 新的地址空间构建完毕, 可以释放旧的资源了
+
+- step-7: 设置trapframe的相关字段: 返回用户态的参数1(argc)、参数2(argv)、PC指针、SP指针
+
+- step-8: 更新进程的相关字段: 页表、frame、heap_top、ustack_npage、mmap、name
+
+助教将比较麻烦的`load_segment` `prepare_heap` `prepare_stack` 剥离出来并实现了, 你只需完成主线任务。成功时返回argc, 由系统调用的返回路径使用新的frame返回用户态
+
+这个函数的复杂性大概是OS内核中最高的, 横跨进程、内存、文件系统三大核心模块, 需要你非常细心并充分理解每个步骤
+
+## 第5步: 增加系统调用 (syscall)
+
+为了便于在用户态进行系统测试, 你需要先实现一些新的系统调用, 主要是文件系统相关的 (9-22)
+
+这是最新的系统调用表, 你需要参考它修改**crates/kernel/src/syscall/mod.rs**与**crates/kernel/src/syscall/file.rs**中的缺漏
+
+更多输入输出细节请参考**crates/kernel/src/syscall/file.rs**中各个系统调用函数的注释
+
+```rust
+pub const SYS_BRK: usize = 1; // 调整堆边界
+pub const SYS_MMAP: usize = 2; // 创建内存映射
+pub const SYS_MUNMAP: usize = 3; // 解除内存映射
+pub const SYS_FORK: usize = 4; // 进程复制
+pub const SYS_WAIT: usize = 5; // 等待子进程退出
+pub const SYS_EXIT: usize = 6; // 进程退出
+pub const SYS_SLEEP: usize = 7; // 进程睡眠一段时间
+pub const SYS_GETPID: usize = 8; // 获取当前进程的ID
+pub const SYS_EXEC: usize = 9; // 执行ELF文件
+pub const SYS_OPEN: usize = 10; // 打开文件
+pub const SYS_CLOSE: usize = 11; // 关闭文件
+pub const SYS_READ: usize = 12; // 读取文件
+pub const SYS_WRITE: usize = 13; // 写入文件
+pub const SYS_LSEEK: usize = 14; // 移动读写指针
+pub const SYS_DUP: usize = 15; // 复制文件权限
+pub const SYS_FSTAT: usize = 16; // 获取文件状态信息
+pub const SYS_GET_DENTRIES: usize = 17; // 获取目录下所有有效目录项
+pub const SYS_MKDIR: usize = 18; // 创建目录文件
+pub const SYS_CHDIR: usize = 19; // 切换工作目录
+pub const SYS_PRINT_CWD: usize = 20; // 打印工作目录的绝对路径
+pub const SYS_LINK: usize = 21; // 建立硬链接
+pub const SYS_UNLINK: usize = 22; // 解除硬链接
+```
 
 ## 测试用例
 
-考虑到测试的便捷性, 请直接在`fs::init`的最后位置添加一组测试逻辑, 替换原有的`lab8_examples::lab8_examples()`调用。
+实现`exec::exec`对系统调用的测试有很大帮助, 现在的测试流程是:
 
-**测试1: inode的访问 + 创建 + 删除**
+**user/src/bin/init.rs -> (fork + exec + wait) -> test_1 or test_2 or test_3 ...**
 
-测试现象示意:
+你只需要修改`user/src/bin/init.rs`中的**path**和**argv**参数即可启动不同的测试点
 
-![pic](./pictures/01.png)
+修改测试程序后, 需要重新生成磁盘映像, 才能运行更新后的ELF文件。QEMU使用`cargo xtask disk --config riscv64-qemu-virt`, VisionFive2使用`cargo xtask disk --config riscv64-visionfive2`。已有镜像不会自动覆盖, 请先保存需要保留的数据, 再加上`--force`重新生成
 
-```rust
-    /* fs::init in fs/mod.rs */
-    use crate::fs::{bitmap, inode};
-    use oslab_uapi::disk::*;
-    // SAFETY: fs::init已完成超级块初始化, 此后只读。
-    let sb = unsafe {
-        (&*(&raw const crate::fs::SUPERBLOCK))
-            .as_ref()
-            .expect("fs init")
-    };
-
-    crate::println!("============= test begin =============");
-    let rooti = inode::get(ROOT_INODE);
-    rooti.lock().print("root");
-    /* 第一次查看bitmap */
-    bitmap::print(sb, false);
-    let ip_1 = inode::create(INODE_DIR, INODE_MAJOR_DEFAULT, INODE_MINOR_DEFAULT);
-    let ip_2 = inode::create(INODE_DATA, INODE_MAJOR_DEFAULT, INODE_MINOR_DEFAULT);
-    let mut g1 = ip_1.lock();
-    let mut g2 = ip_2.lock();
-    let duplicate = ip_2.dup();
-    g1.print("dir");
-    g2.print("data");
-    /* 第二次查看bitmap */
-    bitmap::print(sb, false);
-    g1.info_mut().nlink = 0;
-    g2.info_mut().nlink = 0;
-    drop(g1);
-    drop(g2);
-    drop(ip_1);
-    drop(ip_2);
-    /* 第三次查看bitmap */
-    bitmap::print(sb, false);
-    drop(duplicate);
-    /* 第四次查看bitmap */
-    bitmap::print(sb, false);
-    crate::println!("============= test end =============");
-    loop {
-        core::hint::spin_loop();
-    }
-```
-
-**测试2: 写入和读取inode管理的数据**
-
-测试现象示意:
-
-![pic](./pictures/02.png)
-
-```rust
-    /* fs::init in fs/mod.rs */
-    use crate::fs::inode::{self, ReadDst, WriteSrc};
-    use crate::mem::{PAGE_SIZE, pmem};
-    use oslab_uapi::disk::*;
-
-    crate::println!("============= test begin =============");
-    /* 小批量读写测试 */
-    let mut small_src = [0u8; 40];
-    let mut small_dst = [0u8; 40];
-    for i in 0..10u32 {
-        small_src[i as usize * 4..i as usize * 4 + 4].copy_from_slice(&i.to_le_bytes());
-    }
-    let ip_1 = inode::create(INODE_DATA, INODE_MAJOR_DEFAULT, INODE_MINOR_DEFAULT);
-    let mut g1 = ip_1.lock();
-    g1.print("small_data");
-    crate::println!("writing data...");
-    for offset in (0..400 * 40).step_by(40) {
-        assert_eq!(
-            g1.write_data(offset, WriteSrc::Kernel(&small_src)),
-            40,
-            "write fail 1"
-        );
-    }
-    g1.print("small_data");
-    assert_eq!(
-        g1.read_data(120 * 40 + 4, ReadDst::Kernel(&mut small_dst)),
-        40,
-        "read fail 1"
-    );
-    crate::print!("read data:");
-    for b in small_dst.chunks_exact(4) {
-        crate::print!(" {}", u32::from_le_bytes(b.try_into().unwrap()));
-    }
-    crate::println!();
-    g1.info_mut().nlink = 0;
-    drop(g1);
-    drop(ip_1);
-    /* 大批量读写测试 */
-    // 分别申请五页，逐页验证连续；不能对用户地址作此处理。
-    let big = pmem::alloc(true);
-    for i in 1..5 {
-        assert_eq!(pmem::alloc(true), big + i * PAGE_SIZE, "contiguous fail");
-    }
-    {
-        // SAFETY: 五个内核页均独占且刚刚验证连续，切片在 free 前结束使用。
-        let big_src = unsafe { core::slice::from_raw_parts_mut(big as *mut u8, 5 * PAGE_SIZE) };
-        for (i, b) in big_src.iter_mut().enumerate() {
-            *b = b'A' + (i % 8) as u8;
-        }
-        let ip_2 = inode::create(INODE_DATA, INODE_MAJOR_DEFAULT, INODE_MINOR_DEFAULT);
-        let mut g2 = ip_2.lock();
-        g2.print("big_data");
-        crate::println!("writing data...");
-        let cut_len = (PAGE_SIZE * 4 + 1110) as u32; // 17494
-        for offset in (0..cut_len * 10000).step_by(cut_len as usize) {
-            assert_eq!(
-                g2.write_data(offset, WriteSrc::Kernel(&big_src[..cut_len as usize])),
-                cut_len as usize,
-                "write fail 2"
-            );
-        }
-        g2.print("big_data");
-        let mut big_dst = [0u8; 9];
-        // 尾部读取必须是仍持锁的大文件 ip_2。
-        assert_eq!(
-            g2.read_data(cut_len * 10000 - 8, ReadDst::Kernel(&mut big_dst[..8])),
-            8,
-            "read fail 2"
-        );
-        crate::println!(
-            "read data: {}",
-            core::str::from_utf8(&big_dst[..8]).unwrap()
-        );
-        g2.info_mut().nlink = 0;
-        drop(g2);
-        drop(ip_2);
-    }
-    for i in 0..5 {
-        // SAFETY: 对应本测试独占申请的五页，数据引用均已结束。
-        unsafe {
-            pmem::free(big + i * PAGE_SIZE, true);
-        }
-    }
-    crate::println!("============= test end =============");
-    loop {
-        core::hint::spin_loop();
-    }
-```
-
-**测试3: 目录项的增加、删除、查找操作**
-
-测试现象示意:
-
-![pic](./pictures/03.png)
-
-```rust
-    /* fs::init in fs/mod.rs */
-    use crate::fs::{
-        dentry,
-        inode::{self, ReadDst},
-    };
-    use oslab_uapi::disk::*;
-
-    crate::println!("============= test begin =============");
-    let rooti = inode::get(ROOT_INODE);
-    /* 搜索预置的dentry */
-    let mut gr = rooti.lock();
-    let inode_num_1 = dentry::search(&mut gr, b"ABCD.txt").expect("invalid inode num");
-    let inode_num_2 = dentry::search(&mut gr, b"abcd.txt").expect("invalid inode num");
-    let inode_num_3 = dentry::search(&mut gr, b".").expect("invalid inode num");
-    dentry::print(&gr).unwrap();
-    drop(gr);
-    let ip_1 = inode::get(inode_num_1);
-    let mut g1 = ip_1.lock();
-    let ip_2 = inode::get(inode_num_2);
-    let mut g2 = ip_2.lock();
-    let ip_3 = inode::get(inode_num_3);
-    let g3 = ip_3.lock();
-    g1.print("ABCD.txt");
-    g2.print("abcd.txt");
-    g3.print("root");
-    let mut tmp = [0u8; 10];
-    assert_eq!(
-        g1.read_data(0, ReadDst::Kernel(&mut tmp[..9])),
-        9,
-        "read fail 1"
-    );
-    crate::println!("read data: {}", core::str::from_utf8(&tmp[..9]).unwrap());
-    assert_eq!(
-        g2.read_data(0, ReadDst::Kernel(&mut tmp[..9])),
-        9,
-        "read fail 2"
-    );
-    crate::println!("read data: {}", core::str::from_utf8(&tmp[..9]).unwrap());
-    drop(g1);
-    drop(g2);
-    drop(g3);
-    drop(ip_1);
-    drop(ip_2);
-    drop(ip_3);
-    /* 创建和删除dentry */
-    let mut gr = rooti.lock();
-    let new_dir = inode::create(INODE_DIR, INODE_MAJOR_DEFAULT, INODE_MINOR_DEFAULT);
-    let offset = dentry::create(&mut gr, new_dir.number(), b"new_dir").unwrap();
-    let number = dentry::search(&mut gr, b"new_dir").unwrap();
-    crate::println!(
-        "new dentry offset = {}\nnew dentry inode_num = {}",
-        offset,
-        number
-    );
-    dentry::print(&gr).unwrap();
-    assert_eq!(
-        number,
-        dentry::delete(&mut gr, b"new_dir").unwrap(),
-        "inode num is not equal"
-    );
-    dentry::print(&gr).unwrap();
-    drop(gr);
-    drop(rooti);
-    crate::println!("============= test end =============");
-    loop {
-        core::hint::spin_loop();
-    }
-```
-
-**测试4: 文件路径的解析**
-
-测试现象示意:
-
-![pic](./pictures/04.png)
-
-```rust
-    /* fs::init in fs/mod.rs */
-    use crate::fs::{
-        dentry,
-        inode::{self, ReadDst, WriteSrc},
-    };
-    use oslab_uapi::disk::*;
-
-    crate::println!("============= test begin =============");
-    /* 准备测试环境 */
-    let rooti = inode::get(ROOT_INODE);
-    let ip_1 = inode::create(INODE_DIR, INODE_MAJOR_DEFAULT, INODE_MINOR_DEFAULT);
-    let ip_2 = inode::create(INODE_DIR, INODE_MAJOR_DEFAULT, INODE_MINOR_DEFAULT);
-    let ip_3 = inode::create(INODE_DATA, INODE_MAJOR_DEFAULT, INODE_MINOR_DEFAULT);
-    let mut gr = rooti.lock();
-    let mut g1 = ip_1.lock();
-    let mut g2 = ip_2.lock();
-    let mut g3 = ip_3.lock();
-    dentry::create(&mut gr, ip_1.number(), b"AABBC").expect("dentry_create fail 1");
-    dentry::create(&mut g1, ip_2.number(), b"aaabb").expect("dentry_create fail 2");
-    dentry::create(&mut g2, ip_3.number(), b"file.txt").expect("dentry_create fail 3");
-    let tmp1 = b"This is file context!\0";
-    g3.write_data(0, WriteSrc::Kernel(tmp1));
-    gr.rw(true);
-    g1.rw(true);
-    g2.rw(true);
-    drop(gr);
-    drop(g1);
-    drop(g2);
-    drop(g3);
-    drop(rooti);
-    drop(ip_1);
-    drop(ip_2);
-    drop(ip_3);
-    let path = b"///AABBC///aaabb/file.txt";
-    let ip_4 = dentry::lookup(path).ok().expect("invalid ip_4");
-    let (ip_5, name) = dentry::parent(path).ok().expect("invalid ip_5");
-    let end = name.iter().position(|b| *b == 0).unwrap_or(NAME_BYTES);
-    crate::println!(
-        "get a name = {}",
-        core::str::from_utf8(&name[..end]).unwrap()
-    );
-    let mut g4 = ip_4.lock();
-    let g5 = ip_5.lock();
-    g4.print("file.txt");
-    g5.print("aaabb");
-    let mut tmp2 = [0u8; 32];
-    g4.read_data(0, ReadDst::Kernel(&mut tmp2));
-    let end = tmp2.iter().position(|b| *b == 0).unwrap_or(32);
-    crate::println!("read data: {}", core::str::from_utf8(&tmp2[..end]).unwrap());
-    drop(g4);
-    drop(g5);
-    drop(ip_4);
-    drop(ip_5);
-    crate::println!("============= test end =============");
-```
+助教准备了4个测试用例 (在`user/src/bin`目录中), 请你依次执行, 参考输出见[测试1](pictures/01.png)、[测试2](pictures/02.png)、[测试3](pictures/03.png)、[测试4](pictures/04.png)
 
 **尾声**
 
-本次实验我们实现了两个文件系统的基石: inode 和 dentry
+**历经9次实验, 我们终于完成了这个小型操作系统内核的全部工作, 祝贺!**
 
-它们分别定义了文件系统的数据组织逻辑和层次化逻辑, 希望能帮助你理解文件系统的构建逻辑
+它由内核态程序、用户态程序、文件系统初始化程序、链接脚本四部分构成
 
-在lab-9中, 我们将先基于这两块基石构建**普通文件和目录文件**的管理逻辑
+**我们先来回顾一下9次实验的内容:**
 
-之后, 秉持**一切皆文件**的Linux设计哲学, 我们还将介绍一类特殊的文件——**设备文件**
+- lab 1: 机器启动  
+- lab 2: 内存管理初步  
+- lab 3: 中断异常初步  
+- lab 4: 第一个用户态进程的诞生
+- lab 5: 系统调用流程建立+用户态虚拟内存管理
+- lab 6: 从单进程走向多进程--进程调度与生命周期
+- lab 7: 文件系统 之 磁盘管理  
+- lab 8: 文件系统 之 数据组织与层次结构  
+- lab 9: 文件系统 之 文件管理与全系统整合  
 
-最后, 我们还将讨论进程模块与文件系统的关系, 并补全进程模块的最后一块拼图——**proc::exec::exec**
+**这9次实验大致可以划分成3个阶段:**
 
-**lab-9 既是文件系统的最终章、也是内核全系统的粘合剂、还是迄今为止最困难的终极考核!**
+- lab 1-3: 构建OS内核的基础设施, 例如串口、自旋锁、物理页、页表、中断异常等  
+- lab 4-6: 按照“从一到多,从弱到强”的顺序构建进程模块, 并与内存模块、陷阱模块深度绑定  
+- lab 7-9: 引入持久化存储概念, 自底向上构建文件系统模块, 并与进程模块深度绑定  
+
+助教希望能帮你梳理系统构建的底层逻辑, 并带领你一步步来做; 但是受限于能力和精力, 难免有所缺漏, 请多包涵
+
+经过这样的动手过程, 相信你对小型OS内核已经建立起了基本概念; 请记住, **这是起点而非终点**
+
+**如果你想进一步完善和改进这个基础版本的OS内核, 我们提供了一些方向:**
+
+- **内存管理**: (1) 实现更完善的缺页异常和写时拷贝机制; (2) 实现伙伴系统分配器
+- **进程管理**: (1) 实现多级反馈调度算法来替换现有的轮询式调度; (2) 实现内核态线程机制
+- **文件系统**: (1) 修改现有的mmap机制, 实现文件映射能力; (2) 实现基于FAT的文件系统, 构建VFS层
+- **用户程序**: (1) 实现一个好用的shell程序; (2) 补充更多实用程序(如ls、cd、cat等)
+- **硬件适配**: (1) 在QEMU和VisionFive2之外适配其他开发板; (2) 支持更多体系结构（如x86、ARM、LoongArch等）
+
+**这个你亲手完成的小型OS内核, 将成为操作系统研究道路上的第一块砖, 支撑你走得更远!**
 
 ## 进阶目标
 
-### 日志文件系统
+### PIE 程序加载
 
-创建一个文件时, 位图、inode和目录都可能需要更新。如果写到一半突然断电, 这些信息就可能互相矛盾。日志文件系统会先记录一组相关修改, 让重启后的内核能够判断这组操作是否完成, 并据此恢复。
+本次实验加载的ELF程序使用固定的链接地址。PIE程序可以装载到不同的地址, 但程序中的某些地址引用还需要根据装载位置进行调整, 这个过程称为重定位。
 
-请你先以创建文件为例, 确定哪些修改需要一起完成, 再尝试设计日志记录、提交标志和恢复顺序。在不同写入位置模拟断电, 重启后检查目录、链接数和位图是否一致, 验证后再扩大日志覆盖的操作范围。
+请你尝试支持一种不依赖动态链接器的简单PIE程序。可以先阅读它的程序头和重定位表, 选择少量重定位类型实现, 再将同一个程序加载到不同地址, 观察全局变量和指针访问是否正确。
 
-### VFS 挂载
+### 其他文件系统
 
-不同文件系统组织磁盘数据的方式可能不同, 但都需要提供文件查找、目录遍历等操作。VFS用一组共同接口连接这些实现, 挂载则让一个文件系统出现在另一个文件系统的目录下。
+本次实验中的文件操作建立在我们自己的inode和目录布局上。其他文件系统可以采用不同的磁盘组织方式, 而用户仍希望通过open、read等接口访问文件。
 
-请你尝试从inode、目录和路径操作中提取共同接口, 先在一个目录上挂载第二个只读实例。观察跨挂载点的路径解析, 测试根目录、`.`、`..`以及仍有引用时的卸载, 注意区分不同文件系统中相同的inode编号。完成lab-9的文件接口后, 可以继续验证文件访问。
+请你选择另一种文件系统, 尝试从现有的文件和路径接口接入。可以先实现只读访问, 将相同内容的文件放入两种文件系统, 比较读取结果, 再考虑如何支持挂载和写入。
 
-### 统一 page cache
+### procfs
 
-本次实验按磁盘块缓存数据, 文件读写需要先把文件内偏移换成块号。如果改为按文件和页号缓存, 文件读写与文件内存映射就可以使用同一份内存副本。修改过但尚未写回磁盘的页面称为脏页, 回收前需要处理这些修改。
+我们已经用设备文件说明, 文件中的内容不一定来自磁盘。procfs将进程信息呈现为文件, 读取这些文件时, 内核根据当前的进程状态生成内容。
 
-请你尝试设计这样的缓存, 可以先确定如何标识文件页、记录脏页和安排写回, 再考虑它与现有块缓存的关系。结合后续文件与映射实验, 观察不同方式访问同一文件时能否读到一致的数据, 并检查写回失败或页面仍在使用时该如何处理回收。
+请你尝试提供只读的进程列表和单个进程的状态文件。可以先从PID、名称和运行状态入手, 再一边创建、退出进程, 一边读取这些文件, 观察是否会读到已经回收或被其他进程重新使用的槽位。
+
+### newlib 移植
+
+目前用户程序直接使用本实验提供的系统调用封装和辅助函数。newlib是一套面向嵌入式系统的C标准库, 将它接入内核后, 用户程序就有机会使用printf、malloc等熟悉的接口。
+
+请你尝试运行一个静态链接newlib的C程序。可以从程序入口和read、write、brk等接口的适配入手, 注意标准库与本实验系统调用的返回值和数据布局差异, 再用打印、标准输入和内存申请释放的小程序检查结果。

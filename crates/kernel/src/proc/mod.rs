@@ -1,4 +1,6 @@
 pub mod lifecycle;
+pub mod files;
+pub mod exec;
 pub mod schedule;
 use crate::{mem::PageTable, lock::SpinLock};
 pub const N_PROC: usize = 32;
@@ -27,6 +29,9 @@ pub struct Proc {
     /// 高地址虚拟栈底；启动时映射，常驻且随槽复用，进程回收不释放。
     pub kstack: usize,
     pub mmap: *mut crate::mem::mmap::Region,
+    pub files: [Option<crate::fs::file::FileRef>; 10],
+    pub cwd: Option<crate::fs::inode::InodeRef>,
+    pub reclaiming: bool, // lock 保护，不增加状态
     pub context: Context,
 }
 /// 每个内核栈一页，间隔一页不映射；id 是 0..N_PROC 的槽索引，不是 PID。
@@ -35,7 +40,7 @@ pub const fn kstack(id: usize) -> usize {
 }
 pub const USER_STACK_TOP: usize = oslab_hal::arch::trap::TRAPFRAME;
 impl Proc {
-    pub const EMPTY: Self = Self { lock: SpinLock::UNINIT, name: [0; 16], parent: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()), exit_code: 0, chan: 0, pid: 0, state: State::Unused, pgtbl: core::ptr::null_mut(), heap_top: 0, ustack_npage: 0, frame: core::ptr::null_mut(), kstack: 0, mmap: core::ptr::null_mut(), context: Context::ZERO };
+    pub const EMPTY: Self = Self { lock: SpinLock::UNINIT, name: [0; 16], parent: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()), exit_code: 0, chan: 0, pid: 0, state: State::Unused, pgtbl: core::ptr::null_mut(), heap_top: 0, ustack_npage: 0, frame: core::ptr::null_mut(), kstack: 0, mmap: core::ptr::null_mut(), files: [const { None }; 10], cwd: None, reclaiming: false, context: Context::ZERO };
 }
 pub static mut PROCZERO: *mut Proc = core::ptr::null_mut();
 static mut CURRENT: [*mut Proc; NCPU] = [core::ptr::null_mut(); NCPU];

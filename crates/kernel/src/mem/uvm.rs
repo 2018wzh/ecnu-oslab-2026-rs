@@ -29,9 +29,9 @@ pub fn copy_to_user(_p: &Proc, _dst: usize, _src: &[u8]) { todo!("lab-5: copy_to
 // 达到上限不新增错误契约，调用者打印前须确认 NUL 或使用有界输出。
 pub fn copy_str_from_user(_p: &Proc, _dst: &mut [u8], _src: usize) { todo!("lab-5: copy_str_from_user") }
 /// # Safety
-/// root 及待增长地址空间由调用者独占，top/len 页对齐且范围合法。
-// TODO(lab-5): 独立堆增长，普通池分配并映射 RWU，返回新堆顶，不超过 MMAP_BEGIN。
-pub unsafe fn heap_grow(_root: PageTable, _top: usize, _len: usize) -> usize { todo!("lab-5: heap_grow") }
+/// root 及待增长地址空间由调用者独占，字节范围合法；按页覆盖，已有部分页不重复映射。
+// TODO(lab-5): 独立堆增长，普通池分配并清零，映射 flags|U，返回新堆顶，不超过 MMAP_BEGIN。
+pub unsafe fn heap_grow(_root: PageTable, _top: usize, _len: usize, _flags: usize) -> usize { todo!("lab-5: heap_grow") }
 /// # Safety
 /// root 独占；解除区间内没有存活引用，top/len 页对齐且范围合法。
 // TODO(lab-5): 独立堆收缩，解除映射并回收普通页，返回新堆顶，不低于 0x2000。
@@ -84,3 +84,6 @@ pub unsafe fn destroy(root: PageTable) {
         destroy_table(root, 3);
     }
 }
+
+// TODO(lab-9): heap_grow 支持输入 R/W/X 权限并加 U；exec 的字节堆顶按页覆盖映射且清零新页。
+// 普通 brk 仍沿用前序页对齐契约并传 RW。

@@ -8,6 +8,7 @@ pub static PLIC: oslab_drivers::irqchip::Plic = unsafe { oslab_drivers::irqchip:
 pub fn init() {
     PLIC.init(platform::UART_IRQ);
     timer::create();
+    crate::console_input::init();
     crate::console::enable_rx();
 }
 /// 初始化 trap 中各个核心独有的东西；所有依赖就绪后才打开中断。
@@ -57,8 +58,7 @@ pub fn external_interrupt() { todo!("lab-3: external_interrupt") }
 /// 教师读取循环：键盘输入 -> 屏幕输出。
 /// 学生在 external_interrupt 中识别 UART 来源并调用这里。
 pub fn uart_interrupt() {
-    // TODO(lab-3): 在教师读取循环中补充换行和 Backspace 的回显处理。
-    while let Some(c) = crate::console::getc() { crate::console::putc(c); }
+    while let Some(c) = crate::console::getc() { crate::console_input::edit(c); }
 }
 
 // TODO(lab-7): BLOCK_IRQ 优先级、每核使能；claim 匹配后 fs::block::interrupt，最后 complete。

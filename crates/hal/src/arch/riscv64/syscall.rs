@@ -8,3 +8,9 @@ pub fn return_value(frame: &mut TrapFrame, result: isize) {
     frame.x[10] = result as usize;
     frame.epc += 4;
 }
+
+/// exec_success 由原调用号和结果判定；新 PC 已由 exec 安装，不能再推进。
+pub fn finish(frame: &mut super::trap::TrapFrame, result: isize, exec_success: bool) {
+    if exec_success { frame.x[10] = result as usize; }
+    else { return_value(frame, result); }
+}

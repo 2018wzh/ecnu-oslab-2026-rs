@@ -30,3 +30,6 @@ pub fn alloc(_kernel: bool) -> usize { todo!("lab-2: pmem::alloc") }
 /// pa 是指定池分配的页面，调用者停止所有使用，消除引用及需要保持有效的别名映射。
 // TODO(lab-2): 释放物理页，持对应池锁归还链表并更新计数；失败 panic。
 pub unsafe fn free(_pa: usize, _kernel: bool) { todo!("lab-2: pmem::free") }
+
+// TODO(lab-9): 在对应物理池锁保护下统计空闲页。
+pub fn stat(_kernel: bool) -> usize { todo!("lab-9: pmem_stat") }

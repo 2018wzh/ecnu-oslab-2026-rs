@@ -1,12 +1,13 @@
 use crate::{Result, config::Config, root};
-use std::{fs::OpenOptions, io::{Write, Seek, SeekFrom}, path::PathBuf};
+use std::{fs::OpenOptions, io::{Read, Write, Seek, SeekFrom}, path::PathBuf};
 use oslab_uapi::disk::*;
 pub fn path(c: &Config) -> PathBuf { root().join("target").join(&c.name).join("disk.img") }
 pub fn create(c: &Config, force: bool) -> Result<()> {
+    let programs = crate::user::programs(c)?;
     let path = path(c);
     std::fs::create_dir_all(path.parent().unwrap())?;
     let mut options = OpenOptions::new();
-    options.write(true);
+    options.read(true).write(true);
     if force { options.create(true).truncate(true); } else { options.create_new(true); }
     let mut file = options.open(&path)?;
     let fields = [FS_MAGIC, BLOCK_SIZE as u32, TOTAL_BLOCKS, N_INODE, INODE_BITMAP_FIRST, INODE_BITMAP_BLOCKS,
@@ -16,6 +17,8 @@ pub fn create(c: &Config, force: bool) -> Result<()> {
     file.write_all(&sb)?;
     file.set_len(u64::from(TOTAL_BLOCKS) * BLOCK_SIZE as u64)?;
     seed(&mut file)?;
+    let mut next_data = 7;
+    for (i, program) in programs.iter().enumerate() { import_file(&mut file, &mut next_data, i as u32 + 3, program)?; }
     file.sync_all()?;
     println!("Disk: {}", path.display()); Ok(())
 }
@@ -67,4 +70,57 @@ fn seed(file: &mut std::fs::File) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn at(file: &mut std::fs::File, offset: u64, bytes: &[u8]) -> Result<()> {
+    file.seek(SeekFrom::Start(offset))?; file.write_all(bytes)?; Ok(())
+}
+fn bit_set(file: &mut std::fs::File, first: u32, bit: u32) -> Result<()> {
+    let offset = u64::from(first) * BLOCK_SIZE as u64 + u64::from(bit / 8);
+    file.seek(SeekFrom::Start(offset))?; let mut b = [0]; file.read_exact(&mut b)?;
+    b[0] |= 1 << (bit % 8); at(file, offset, &b)
+}
+fn allocate(file: &mut std::fs::File, next: &mut u32) -> Result<u32> {
+    if *next >= N_DATA_BLOCK { return Err("disk full".into()); }
+    let bit = *next; *next += 1; bit_set(file, DATA_BITMAP_FIRST, bit)?; Ok(DATA_FIRST + bit)
+}
+fn index_set(file: &mut std::fs::File, block: u32, slot: usize, value: u32) -> Result<()> {
+    at(file, u64::from(block) * BLOCK_SIZE as u64 + slot as u64 * 4, &value.to_le_bytes())
+}
+fn import_file(file: &mut std::fs::File, next: &mut u32, inum: u32, path: &std::path::Path) -> Result<()> {
+    let name = path.file_name().ok_or("missing name")?.to_str().ok_or("name encoding")?.as_bytes();
+    if name.is_empty() || name.len() >= 60 || inum >= 63 { return Err("root directory capacity".into()); }
+    let data = std::fs::read(path)?;
+    let size = u32::try_from(data.len())?;
+    let mut indexes = [0u32; 13]; let mut indirect = 0; let mut previous_group = usize::MAX;
+    for (logical, chunk) in data.chunks(BLOCK_SIZE).enumerate() {
+        let block = allocate(file, next)?;
+        at(file, u64::from(block) * BLOCK_SIZE as u64, chunk)?;
+        if logical < 10 { indexes[logical] = block; }
+        else if logical < 2058 {
+            let slot = 10 + (logical - 10) / 1024;
+            if indexes[slot] == 0 { indexes[slot] = allocate(file, next)?; }
+            index_set(file, indexes[slot], (logical - 10) % 1024, block)?;
+        } else {
+            let rest = logical - 2058; let group = rest / 1024;
+            if group >= 1024 { return Err("file too large".into()); }
+            if indexes[12] == 0 { indexes[12] = allocate(file, next)?; }
+            if group != previous_group {
+                indirect = allocate(file, next)?; previous_group = group;
+                index_set(file, indexes[12], group, indirect)?;
+            }
+            index_set(file, indirect, rest % 1024, block)?;
+        }
+    }
+    let mut ip = [0u8; 64];
+    for (i, n) in [INODE_DATA, INODE_MAJOR_DEFAULT, INODE_MINOR_DEFAULT, 1].iter().enumerate() {
+        ip[i * 2..i * 2 + 2].copy_from_slice(&n.to_le_bytes());
+    }
+    ip[8..12].copy_from_slice(&size.to_le_bytes());
+    for (i, n) in indexes.iter().enumerate() { ip[12 + i * 4..16 + i * 4].copy_from_slice(&n.to_le_bytes()); }
+    at(file, u64::from(INODE_FIRST) * BLOCK_SIZE as u64 + u64::from(inum) * 64, &ip)?;
+    bit_set(file, INODE_BITMAP_FIRST, inum)?;
+    let mut entry = [0u8; 64]; entry[..name.len()].copy_from_slice(name); entry[60..].copy_from_slice(&inum.to_le_bytes());
+    at(file, u64::from(DATA_FIRST) * BLOCK_SIZE as u64 + u64::from(inum + 1) * 64, &entry)?;
+    at(file, u64::from(INODE_FIRST) * BLOCK_SIZE as u64 + 8, &((inum + 2) * 64).to_le_bytes())
 }

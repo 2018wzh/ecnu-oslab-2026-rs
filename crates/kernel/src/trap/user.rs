@@ -14,3 +14,7 @@ pub extern "C" fn user_trap() -> ! { todo!("lab-4: user_trap") }
 // 再调用 HAL return_to_user。返回准备仍是架构层学生任务。
 // SAFETY 要求：当前进程独占 frame，页表及 trampoline 映射有效；进入汇编前结束借用。
 pub fn enter_user() -> ! { todo!("lab-4: enter_user") }
+
+// TODO(lab-9): 保存原调用号，dispatch 后重新取得当前 frame；成功 exec 保留新入口 PC、a0=argc；
+// C 用 arch_syscall_finish，Rust 用 HAL syscall::finish(result, number==SYS_EXEC && result>=0)。
+// 普通调用/exec 失败才推进旧 ecall PC；随后走正常用户态返回路径。

@@ -20,3 +20,5 @@ pub fn wakeup(_chan: usize) { todo!("lab-6: wakeup") }
 pub extern "C" fn first_return() -> ! { todo!("lab-6: first_return") }
 
 // TODO(lab-7): first_return 中，proczero 交接并释放进程锁后、进入用户态前单次 fs::init；可睡眠，失败停止。
+
+// TODO(lab-9): 首进程 fs 初始化后调用 files 初始化任务，cwd=root，依次打开 stdin/stdout/stderr。

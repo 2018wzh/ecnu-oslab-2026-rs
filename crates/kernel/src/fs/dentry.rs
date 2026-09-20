@@ -48,3 +48,9 @@ pub fn lookup(path: &[u8]) -> Result<InodeRef, ()> {
 pub fn parent(path: &[u8]) -> Result<(InodeRef, [u8; NAME_BYTES]), ()> {
     resolve(path, true)
 }
+
+// TODO(lab-9): 按 inode 编号反查名称并填入 name，返回名称字节长度（不含 NUL）。
+pub fn search_number(_dir: &mut InodeGuard<'_>, _number: u32, _name: &mut [u8; NAME_BYTES]) -> Result<u32, ()> { todo!("lab-9: search_number") }
+// TODO(lab-9): 传输有效目录项，容量/返回值按字节；保留 UserAddr 的页表复制边界。
+pub fn transmit(_dir: &mut InodeGuard<'_>, _dst: super::inode::ReadDst<'_>) -> Result<usize, ()> { todo!("lab-9: transmit") }
+// TODO(lab-9): resolve 相对路径从当前 cwd.dup 开始，绝对路径仍从根开始。
