@@ -8,6 +8,7 @@ pub struct Config {
     pub ncpu: usize,
     pub target: String,
     pub linker: String,
+    pub user_linker: String,
 }
 
 #[derive(Deserialize)]
@@ -24,6 +25,7 @@ struct PlatformConfig {
 struct ArchConfig {
     target: String,
     linker: String,
+    user_linker: String,
 }
 
 fn read<T: serde::de::DeserializeOwned>(relative: &str) -> Result<T> {
@@ -56,5 +58,6 @@ pub fn load(name: &str) -> Result<Config> {
         ncpu: platform.ncpu,
         target: arch.target,
         linker: arch.linker,
+        user_linker: arch.user_linker,
     })
 }

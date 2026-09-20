@@ -1,6 +1,7 @@
 use crate::{Result, config::Config, execute, root};
 use std::{path::PathBuf, process::Command};
 pub fn kernel(c: &Config) -> Result<PathBuf> {
+    let user_image = crate::user::build(c)?;
     let out = root().join("target").join(&c.name);
     std::fs::create_dir_all(&out)?;
     let script = std::fs::read_to_string(root().join(&c.linker))?
@@ -21,7 +22,8 @@ pub fn kernel(c: &Config) -> Result<PathBuf> {
                 &c.platform,
             ])
             .env("CARGO_TARGET_DIR", &out)
-            .env("OSLAB_LINKER", &linker),
+            .env("OSLAB_LINKER", &linker)
+            .env("OSLAB_USER_IMAGE", &user_image),
     )?;
     let elf = out.join(&c.target).join("release/oslab-kernel");
     println!("ELF: {}", elf.display());

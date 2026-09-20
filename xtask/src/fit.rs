@@ -1,8 +1,6 @@
 use crate::{Result, build, config::Config, execute, root};
 use std::process::Command;
-pub fn image(c: &Config) -> Result<()> {
-    let elf = build::kernel(c)?;
-    let out = root().join("target").join(&c.name);
+pub fn binary(elf: &std::path::Path, bin: &std::path::Path) -> Result<()> {
     let sysroot = Command::new("rustc")
         .args(["--print", "sysroot"])
         .output()?;
@@ -20,9 +18,14 @@ pub fn image(c: &Config) -> Result<()> {
     execute(
         Command::new(objcopy)
             .args(["-O", "binary"])
-            .arg(&elf)
-            .arg(out.join("kernel.bin")),
-    )?;
+            .arg(elf)
+            .arg(bin),
+    )
+}
+pub fn image(c: &Config) -> Result<()> {
+    let elf = build::kernel(c)?;
+    let out = root().join("target").join(&c.name);
+    binary(&elf, &out.join("kernel.bin"))?;
     let its = format!(
         "/dts-v1/; / {{ description = \"OSLab\"; #address-cells = <1>; images {{ kernel {{ description = \"kernel\"; data = /incbin/(\"kernel.bin\"); type = \"kernel\"; arch = \"riscv\"; os = \"linux\"; compression = \"none\"; load = <{0:#x}>; entry = <{0:#x}>; }}; }}; configurations {{ default = \"conf\"; conf {{ kernel = \"kernel\"; }}; }}; }};",
         c.load

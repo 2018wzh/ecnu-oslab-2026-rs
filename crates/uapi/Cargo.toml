@@ -1,0 +1,4 @@
+[package]
+name = "oslab-uapi"
+version.workspace = true
+edition.workspace = true

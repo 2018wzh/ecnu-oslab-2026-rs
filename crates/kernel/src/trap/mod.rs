@@ -1,3 +1,4 @@
+pub mod user;
 pub mod timer;
 use oslab_hal::{arch::trap::TrapFrame, platform};
 // SAFETY: PLIC 由当前平台提供；使用前先映射 MMIO。

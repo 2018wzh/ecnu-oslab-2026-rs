@@ -4,3 +4,5 @@ pub mod csr;
 pub mod sbi;
 pub mod mm;
 pub mod trap;
+pub mod syscall;
+pub mod context;

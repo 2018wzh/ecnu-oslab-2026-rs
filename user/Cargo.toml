@@ -1,0 +1,11 @@
+[package]
+name = "oslab-user"
+version.workspace = true
+edition.workspace = true
+[dependencies]
+oslab-uapi = { path = "../crates/uapi" }
+[[bin]]
+name = "init"
+path = "src/bin/init.rs"
+test = false
+bench = false

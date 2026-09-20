@@ -1,2 +1,3 @@
 target = "riscv64gc-unknown-none-elf"
 linker = "crates/hal/src/arch/riscv64/kernel.ld.in"
+user_linker = "user/arch/riscv64/user.ld"

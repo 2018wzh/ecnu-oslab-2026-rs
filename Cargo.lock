@@ -152,6 +152,18 @@ version = "0.1.0"
 dependencies = [
  "oslab-drivers",
  "oslab-hal",
+ "oslab-uapi",
+]
+
+[[package]]
+name = "oslab-uapi"
+version = "0.1.0"
+
+[[package]]
+name = "oslab-user"
+version = "0.1.0"
+dependencies = [
+ "oslab-uapi",
 ]
 
 [[package]]

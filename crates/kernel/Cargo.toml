@@ -5,6 +5,7 @@ edition.workspace = true
 [dependencies]
 oslab-hal = { path = "../hal" }
 oslab-drivers = { path = "../drivers" }
+oslab-uapi = { path = "../uapi" }
 [features]
 qemu-virt = ["oslab-hal/qemu-virt"]
 visionfive2 = ["oslab-hal/visionfive2"]

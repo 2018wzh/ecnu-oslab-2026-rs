@@ -2,6 +2,7 @@ mod build;
 mod config;
 mod fit;
 mod run;
+mod user;
 use clap::{Parser, Subcommand, ValueEnum};
 use std::{
     path::PathBuf,
