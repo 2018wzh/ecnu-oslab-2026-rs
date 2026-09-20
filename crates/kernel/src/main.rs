@@ -6,6 +6,7 @@ mod console;
 mod print;
 mod panic;
 mod lock;
+mod mem;
 use oslab_hal as _;
 
 // TODO(lab-1): 主核初始化并启动其他核，以原子操作同步；每核打印一次。
