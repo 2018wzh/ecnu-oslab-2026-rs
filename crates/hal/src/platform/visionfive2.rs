@@ -11,3 +11,6 @@ pub const PLIC_BASE: usize = 0x0c00_0000;
 pub const PLIC_SIZE: usize = 0x0400_0000;
 pub const TIMER_INTERVAL: usize = 400_000;
 pub fn plic_context(hart: usize) -> usize { 2 * hart - 1 }
+pub const BLOCK_BASE: usize = 0x1602_0000;
+pub const BLOCK_IRQ: u32 = 75;
+pub const CCACHE_BASE: usize = 0x0201_0000;

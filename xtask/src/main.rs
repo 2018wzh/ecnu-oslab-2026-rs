@@ -3,6 +3,7 @@ mod config;
 mod fit;
 mod run;
 mod user;
+mod disk;
 use clap::{Parser, Subcommand, ValueEnum};
 use std::{
     path::PathBuf,
@@ -29,6 +30,8 @@ enum Task {
     Debug,
     /// 生成 U-Boot FIT 镜像
     Image,
+    /// 新建磁盘镜像，拒绝覆盖现有文件
+    Disk { #[arg(long)] force: bool },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -78,6 +81,7 @@ fn dispatch(cli: Cli) -> Result<()> {
         Task::Run => run::run(&cfg, false)?,
         Task::Debug => run::run(&cfg, true)?,
         Task::Image => fit::image(&cfg)?,
+        Task::Disk { force } => disk::create(&cfg, force)?,
     }
     Ok(())
 }

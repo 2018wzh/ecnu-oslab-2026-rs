@@ -63,3 +63,9 @@ pub fn set_resume_interrupts(enabled: bool) {
     assert_eq!(interrupt_depth(), 1);
     ENABLED[cpu_id()].store(enabled, Relaxed);
 }
+
+/// DMA/MMIO 访问排序；这不是缓存刷新。
+pub fn dma_fence() {
+    // SAFETY: fence 只排序访问，不修改寄存器上下文或控制流。
+    unsafe { core::arch::asm!("fence iorw, iorw", options(nostack)); }
+}

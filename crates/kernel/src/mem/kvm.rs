@@ -48,3 +48,9 @@ pub unsafe fn print(root: PageTable) {
     // SAFETY: 继承调用者对页表完整性的保证。
     unsafe { level(root, 2); }
 }
+
+/// TODO(lab-7): 查询 ROOT，验证有效叶项并加页内偏移，缺失 panic。
+/// 独立内核转换入口；不改变 getpte 的空 root 契约。
+pub fn translate(_va: usize) -> usize { todo!("lab-7: kvm::translate") }
+
+// TODO(lab-7): init 中调用 fs::block::map，普通 getpte 空 root 契约不变。

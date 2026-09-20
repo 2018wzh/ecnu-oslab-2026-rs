@@ -18,3 +18,5 @@ pub fn sleep<'a>(_chan: usize, _condition: SpinGuard<'a>) -> SpinGuard<'a> { tod
 pub fn wakeup(_chan: usize) { todo!("lab-6: wakeup") }
 // TODO(lab-6): 当前核接管调度器交来的进程锁 resume，drop 后进入用户态。
 pub extern "C" fn first_return() -> ! { todo!("lab-6: first_return") }
+
+// TODO(lab-7): first_return 中，proczero 交接并释放进程锁后、进入用户态前单次 fs::init；可睡眠，失败停止。

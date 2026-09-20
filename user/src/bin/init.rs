@@ -4,12 +4,9 @@ use oslab_user::syscall as sys;
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.entry")]
 pub extern "C" fn _start() -> ! {
-    if sys::getpid() == 1 {
-        // SAFETY: 静态 NUL 字符串在调用期间有效。
-        unsafe {
-            sys::print_str(c"\nproczero: hello ".as_ptr().cast());
-            sys::print_str(c"world!\n".as_ptr().cast());
-        }
+    // SAFETY: 受控单进程例程，令牌原样回传，不重复归还，不调用 fork/exit。
+    unsafe {
+        sys::print_str(c"hello, world!\n".as_ptr().cast());
     }
     loop { core::hint::spin_loop(); }
 }

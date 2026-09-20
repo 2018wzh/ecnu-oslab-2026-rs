@@ -59,3 +59,80 @@ pub fn sleep(ticks: usize) -> isize {
     // SAFETY: 纯值参数。
     unsafe { syscall6(oslab_uapi::SYS_SLEEP, [ticks, 0, 0, 0, 0, 0]) }
 }
+/// # Safety
+/// 受控测试：原样回传令牌；不伪造、不重复归还，资源归还前不 fork/exit。
+/// data 如存在，须覆盖完整 4096 字节并满足读写方向及独占性。
+pub unsafe fn alloc_block() -> isize {
+    // SAFETY: 调用者保证测试资源和用户地址有效。
+    unsafe { syscall6(oslab_uapi::SYS_ALLOC_BLOCK, [0, 0, 0, 0, 0, 0]) }
+}
+/// # Safety
+/// 受控测试：原样回传令牌；不伪造、不重复归还，资源归还前不 fork/exit。
+/// data 如存在，须覆盖完整 4096 字节并满足读写方向及独占性。
+pub unsafe fn free_block(number: u32) -> isize {
+    // SAFETY: 调用者保证测试资源和用户地址有效。
+    unsafe { syscall6(oslab_uapi::SYS_FREE_BLOCK, [number as usize, 0, 0, 0, 0, 0]) }
+}
+/// # Safety
+/// 受控测试：原样回传令牌；不伪造、不重复归还，资源归还前不 fork/exit。
+/// data 如存在，须覆盖完整 4096 字节并满足读写方向及独占性。
+pub unsafe fn alloc_inode() -> isize {
+    // SAFETY: 调用者保证测试资源和用户地址有效。
+    unsafe { syscall6(oslab_uapi::SYS_ALLOC_INODE, [0, 0, 0, 0, 0, 0]) }
+}
+/// # Safety
+/// 受控测试：原样回传令牌；不伪造、不重复归还，资源归还前不 fork/exit。
+/// data 如存在，须覆盖完整 4096 字节并满足读写方向及独占性。
+pub unsafe fn free_inode(number: u32) -> isize {
+    // SAFETY: 调用者保证测试资源和用户地址有效。
+    unsafe { syscall6(oslab_uapi::SYS_FREE_INODE, [number as usize, 0, 0, 0, 0, 0]) }
+}
+/// # Safety
+/// 受控测试：原样回传令牌；不伪造、不重复归还，资源归还前不 fork/exit。
+/// data 如存在，须覆盖完整 4096 字节并满足读写方向及独占性。
+pub unsafe fn show_bitmap(inode: u32) -> isize {
+    // SAFETY: 调用者保证测试资源和用户地址有效。
+    unsafe { syscall6(oslab_uapi::SYS_SHOW_BITMAP, [inode as usize, 0, 0, 0, 0, 0]) }
+}
+/// # Safety
+/// 受控测试：原样回传令牌；不伪造、不重复归还，资源归还前不 fork/exit。
+/// data 如存在，须覆盖完整 4096 字节并满足读写方向及独占性。
+pub unsafe fn get_block(block: u32) -> isize {
+    // SAFETY: 调用者保证测试资源和用户地址有效。
+    unsafe { syscall6(oslab_uapi::SYS_GET_BLOCK, [block as usize, 0, 0, 0, 0, 0]) }
+}
+/// # Safety
+/// 受控测试：原样回传令牌；不伪造、不重复归还，资源归还前不 fork/exit。
+/// data 如存在，须覆盖完整 4096 字节并满足读写方向及独占性。
+pub unsafe fn read_block(token: usize, data: *mut u8) -> isize {
+    // SAFETY: 调用者保证测试资源和用户地址有效。
+    unsafe { syscall6(oslab_uapi::SYS_READ_BLOCK, [token as usize, data as usize, 0, 0, 0, 0]) }
+}
+/// # Safety
+/// 受控测试：原样回传令牌；不伪造、不重复归还，资源归还前不 fork/exit。
+/// data 如存在，须覆盖完整 4096 字节并满足读写方向及独占性。
+pub unsafe fn write_block(token: usize, data: *const u8) -> isize {
+    // SAFETY: 调用者保证测试资源和用户地址有效。
+    unsafe { syscall6(oslab_uapi::SYS_WRITE_BLOCK, [token as usize, data as usize, 0, 0, 0, 0]) }
+}
+/// # Safety
+/// 受控测试：原样回传令牌；不伪造、不重复归还，资源归还前不 fork/exit。
+/// data 如存在，须覆盖完整 4096 字节并满足读写方向及独占性。
+pub unsafe fn put_block(token: usize) -> isize {
+    // SAFETY: 调用者保证测试资源和用户地址有效。
+    unsafe { syscall6(oslab_uapi::SYS_PUT_BLOCK, [token as usize, 0, 0, 0, 0, 0]) }
+}
+/// # Safety
+/// 受控测试：原样回传令牌；不伪造、不重复归还，资源归还前不 fork/exit。
+/// data 如存在，须覆盖完整 4096 字节并满足读写方向及独占性。
+pub unsafe fn show_buffer() -> isize {
+    // SAFETY: 调用者保证测试资源和用户地址有效。
+    unsafe { syscall6(oslab_uapi::SYS_SHOW_BUFFER, [0, 0, 0, 0, 0, 0]) }
+}
+/// # Safety
+/// 受控测试：原样回传令牌；不伪造、不重复归还，资源归还前不 fork/exit。
+/// data 如存在，须覆盖完整 4096 字节并满足读写方向及独占性。
+pub unsafe fn flush_buffer(count: u32) -> isize {
+    // SAFETY: 调用者保证测试资源和用户地址有效。
+    unsafe { syscall6(oslab_uapi::SYS_FLUSH_BUFFER, [count as usize, 0, 0, 0, 0, 0]) }
+}

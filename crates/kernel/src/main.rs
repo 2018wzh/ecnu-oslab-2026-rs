@@ -10,6 +10,7 @@ mod mem;
 mod trap;
 mod proc;
 mod syscall;
+mod fs;
 use oslab_hal as _;
 
 // TODO(lab-3): 承接前序启动流程，接入共享 trap 初始化与每核 trap 初始化。
@@ -20,3 +21,5 @@ use oslab_hal as _;
 pub extern "C" fn kernel_main() -> ! {
     todo!("lab-1: kernel_main")
 }
+
+// TODO(lab-7): 主核 fs::block::init，在磁盘 PLIC 使能之前完成；失败停止。

@@ -60,3 +60,5 @@ pub fn uart_interrupt() {
     // TODO(lab-3): 在教师读取循环中补充换行和 Backspace 的回显处理。
     while let Some(c) = crate::console::getc() { crate::console::putc(c); }
 }
+
+// TODO(lab-7): BLOCK_IRQ 优先级、每核使能；claim 匹配后 fs::block::interrupt，最后 complete。

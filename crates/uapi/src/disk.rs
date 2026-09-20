@@ -1,0 +1,14 @@
+//! 固定偏移的 12 个小端 u32；禁止序列化宿主结构体。
+pub const FS_MAGIC: u32 = 0x12341234;
+pub const BLOCK_SIZE: usize = 4096;
+pub const DISK_INODE_SIZE: usize = 64;
+pub const N_INODE: u32 = 65536;
+pub const N_DATA_BLOCK: u32 = 1310720;
+pub const INODE_BITMAP_FIRST: u32 = 1;
+pub const INODE_BITMAP_BLOCKS: u32 = (N_INODE + BLOCK_SIZE as u32 * 8 - 1) / (BLOCK_SIZE as u32 * 8);
+pub const INODE_FIRST: u32 = INODE_BITMAP_FIRST + INODE_BITMAP_BLOCKS;
+pub const INODE_BLOCKS: u32 = (N_INODE * DISK_INODE_SIZE as u32 + BLOCK_SIZE as u32 - 1) / BLOCK_SIZE as u32;
+pub const DATA_BITMAP_FIRST: u32 = INODE_FIRST + INODE_BLOCKS;
+pub const DATA_BITMAP_BLOCKS: u32 = (N_DATA_BLOCK + BLOCK_SIZE as u32 * 8 - 1) / (BLOCK_SIZE as u32 * 8);
+pub const DATA_FIRST: u32 = DATA_BITMAP_FIRST + DATA_BITMAP_BLOCKS;
+pub const TOTAL_BLOCKS: u32 = DATA_FIRST + N_DATA_BLOCK;
