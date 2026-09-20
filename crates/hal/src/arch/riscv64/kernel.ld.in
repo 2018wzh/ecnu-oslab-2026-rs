@@ -1,0 +1,17 @@
+OUTPUT_ARCH(riscv)
+ENTRY(_entry)
+SECTIONS {
+    . = @LOAD@;
+    .text : { KEEP(*(.text.entry)) *(.text .text.*) }
+    .rodata : ALIGN(4096) { *(.rodata .rodata.*) }
+    .data : ALIGN(4096) { *(.sdata .sdata.* .data .data.*) }
+    . = ALIGN(8);
+    __bss_start = .;
+    .bss : { *(.sbss .sbss.* .bss .bss.*) }
+    . = ALIGN(8);
+    __bss_end = .;
+    .stacks (NOLOAD) : ALIGN(16) { KEEP(*(.stacks)) }
+    . = ALIGN(4096);
+    kernel_end = .;
+    /DISCARD/ : { *(.eh_frame .comment) }
+}

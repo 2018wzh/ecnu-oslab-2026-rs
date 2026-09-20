@@ -1,0 +1,7 @@
+[package]
+name = "oslab-hal"
+version.workspace = true
+edition.workspace = true
+[features]
+qemu-virt = []
+visionfive2 = []
