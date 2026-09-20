@@ -10,7 +10,7 @@ pub struct Proc {
     pub state: State,
     /// 用户页表根物理地址，内核通过恒等映射访问。
     pub pgtbl: PageTable,
-    /// 字节单位；初值 0x2000，伸缩属于 lab-5。
+    /// 字节单位；初值 0x2000，按页伸缩。
     pub heap_top: usize,
     /// 用户栈页数，初值 1。
     pub ustack_npage: usize,
@@ -18,6 +18,7 @@ pub struct Proc {
     pub frame: *mut UserFrame,
     /// 高地址虚拟栈底；回收前须查 PTE 得物理地址，不能直接传给 free。
     pub kstack: usize,
+    pub mmap: *mut crate::mem::mmap::Region,
     pub context: Context,
 }
 /// 每个内核栈一页，间隔一页不映射；id 须在有效进程编号范围内。
@@ -28,7 +29,7 @@ pub const USER_STACK_TOP: usize = oslab_hal::arch::trap::TRAPFRAME;
 /// 每核旧执行流的独立存储；切换期间关闭中断并独占本核槽位。
 pub static mut BOOT_CONTEXT: [Context; NCPU] = [const { Context::ZERO }; NCPU];
 impl Proc {
-    pub const EMPTY: Self = Self { pid: 0, state: State::Unused, pgtbl: core::ptr::null_mut(), heap_top: 0, ustack_npage: 0, frame: core::ptr::null_mut(), kstack: 0, context: Context::ZERO };
+    pub const EMPTY: Self = Self { pid: 0, state: State::Unused, pgtbl: core::ptr::null_mut(), heap_top: 0, ustack_npage: 0, frame: core::ptr::null_mut(), kstack: 0, mmap: core::ptr::null_mut(), context: Context::ZERO };
 }
 pub static mut PROCZERO: Proc = Proc::EMPTY;
 static mut CURRENT: [*mut Proc; NCPU] = [core::ptr::null_mut(); NCPU];
@@ -43,7 +44,7 @@ pub unsafe fn set_current(p: *mut Proc) {
     unsafe { CURRENT[cpu::cpu_id()] = p; }
 }
 /// # Safety
-/// frame_pa 是调用者持有且已清零的内核池页面，在页表引用期间不得释放。
+/// frame_pa 是已清零的内核池页面；映射成功后由用户页表独占，destroy 释放。
 // TODO(lab-4): 从内核池申请并清零根页表；映射 trampoline RX、frame RW，均不设 U。
 // trampoline 与内核相同 VA/PA；遵循 lab-2 的 getpte/mappages 契约，错误 panic。
 pub unsafe fn pgtbl_init(_frame_pa: usize) -> PageTable { todo!("lab-4: proc::pgtbl_init") }
@@ -51,6 +52,7 @@ pub unsafe fn pgtbl_init(_frame_pa: usize) -> PageTable { todo!("lab-4: proc::pg
 // 设置 pid/state，申请并清零内核池 frame，调用 pgtbl_init。
 // 普通池申请并清零镜像/栈页，检查镜像长度，复制平坦镜像。
 // 映射 USER_ENTRY 代码数据 RWXU、用户栈 RWU，最低页不映射。
+// TODO(lab-5): 初始化 mmap 为空；节点池在创建首进程前初始化。
 // 设置 heap_top=0x2000、ustack_npage=1、用户 PC/SP；kstack=kstack(0)。
 // 栈物理页已由 kvm::init 映射，不重复分配；context 入口为 enter_user，sp 为对齐栈顶。
 // 关闭中断后发布 current，用 BOOT_CONTEXT 本核槽保存启动执行流，调用 arch_switch。

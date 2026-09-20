@@ -1,7 +1,9 @@
 // TODO(lab-4): 中断关闭时安装内核向量并确认来自 U-mode。
 // trampoline 已保存 PC/status；保全返回状态，时钟/外部中断复用 lab-3。
-// U-mode ecall 用 HAL syscall::decode 取调用号，在此写最小分支：
-// oslab_uapi::SYS_HELLO 输出 "proczero: hello world!\n" 返回 0，未知号返回 -38。
+// TODO(lab-5): U-mode ecall 用 HAL syscall::decode 后调用 crate::syscall::dispatch。
+// 未知号由教师函数表报告调用号及 pid 后 panic。
+// 识别完整异常号 13/15，读取 stval，调用 uvm::stack_grow；非法地址 panic。
+// 成功增长后重试原指令，不推进 PC。
 // 仅经 syscall::return_value 写返回值并推进 PC 一次；中断不推进 PC。
 // 其他无法处理的陷阱报告原因、PC、stval 后 panic；最后 enter_user。
 // SAFETY 要求：current/frame 有效且独占，不跨处理调用保留重叠可变借用。
