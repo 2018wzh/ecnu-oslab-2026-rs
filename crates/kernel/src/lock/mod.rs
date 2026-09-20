@@ -1,2 +1,3 @@
 mod spinlock;
-pub use spinlock::SpinLock;
+pub use spinlock::{SpinLock, SpinGuard};
+pub mod sleeplock;

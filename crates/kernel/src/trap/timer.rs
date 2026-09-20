@@ -7,6 +7,7 @@ pub fn init() {
     trap::set_timer(trap::time().wrapping_add(TIMER_INTERVAL)).expect("SBI timer init failed");
 }
 /// 全局系统时钟的更新；仅启动核调用。
+// TODO(lab-6): 更新 ticks 后在条件锁内 wakeup 等待时钟通道的进程。
 // TODO(lab-3): 同步增加共享 ticks；不在此续订各核硬件定时器。
 pub fn update() { todo!("lab-3: timer::update") }
 /// 教师中断外围：每核续订，启动核记账。
@@ -17,3 +18,5 @@ pub fn tick() {
 }
 // TODO(lab-3): 同步读取共享 tick 数。
 pub fn ticks() -> usize { todo!("lab-3: timer::ticks") }
+// TODO(lab-6): 条件锁下检查经过时间并 sleep；tick 更新后 wakeup。
+pub fn wait(_ticks: usize) { todo!("lab-6: timer::wait") }

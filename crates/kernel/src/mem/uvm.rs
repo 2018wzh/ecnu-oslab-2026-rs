@@ -38,16 +38,22 @@ pub unsafe fn heap_grow(_root: PageTable, _top: usize, _len: usize) -> usize { t
 pub unsafe fn heap_ungrow(_root: PageTable, _top: usize, _len: usize) -> usize { todo!("lab-5: heap_ungrow") }
 // TODO(lab-5): 由 ustack_npage 推导栈底，合法缺页补齐到 fault 页，更新页数；非法地址 panic。
 // 预留 4096 页，不越过 MMAP_END；只增长不收缩，调用者重试原 PC。
-pub fn stack_grow(_p: &mut Proc, _fault: usize) { todo!("lab-5: stack_grow") }
+/// # Safety
+/// p 有效且调用者独占资源字段；只借用非 lock 字段，不构造整个 Proc 的可变引用。
+pub unsafe fn stack_grow(_p: *mut Proc, _fault: usize) { todo!("lab-5: stack_grow") }
 /// # Safety
 /// head 链稳定存活，遍历期间不能回收节点。
 // TODO(lab-5): 在 mmap 区扫描有序已分配链，首次适配 len 字节；找不到返回 0。
 pub unsafe fn mmap_find(_head: *const Region, _len: usize) -> usize { todo!("lab-5: mmap_find") }
 // TODO(lab-5): begin=0 调用 mmap_find；有序插入、合并相邻区域、普通池申请并映射 RWU。
 // syscall 检查字节长度和地址，底层失败 panic，不要求回滚。
-pub fn mmap(_p: &mut Proc, _begin: usize, _len: usize) -> usize { todo!("lab-5: uvm::mmap") }
+/// # Safety
+/// p 有效且调用者独占资源字段；只借用非 lock 字段，不构造整个 Proc 的可变引用。
+pub unsafe fn mmap(_p: *mut Proc, _begin: usize, _len: usize) -> usize { todo!("lab-5: uvm::mmap") }
 // TODO(lab-5): 裁剪、拆分、跨节点解除并回收普通页和空节点；底层失败 panic。
-pub fn munmap(_p: &mut Proc, _begin: usize, _len: usize) { todo!("lab-5: uvm::munmap") }
+/// # Safety
+/// p 有效且调用者独占资源字段；只借用非 lock 字段，不构造整个 Proc 的可变引用。
+pub unsafe fn munmap(_p: *mut Proc, _begin: usize, _len: usize) { todo!("lab-5: uvm::munmap") }
 /// # Safety
 /// source 和 mmap 链稳定存活，target 是独立、未发布的根；不共享可写所有权。
 // TODO(lab-5): 按代码、堆、栈、mmap 区域调用 copy_range，保留权限与空洞。

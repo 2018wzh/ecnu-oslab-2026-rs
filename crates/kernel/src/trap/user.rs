@@ -1,3 +1,4 @@
+// TODO(lab-6): 时钟处理完成后，存在 Running 当前进程时 yield；恢复后保全原 PC/status。
 // TODO(lab-4): 中断关闭时安装内核向量并确认来自 U-mode。
 // trampoline 已保存 PC/status；保全返回状态，时钟/外部中断复用 lab-3。
 // TODO(lab-5): U-mode ecall 用 HAL syscall::decode 后调用 crate::syscall::dispatch。

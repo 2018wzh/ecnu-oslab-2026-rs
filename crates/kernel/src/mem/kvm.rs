@@ -20,7 +20,8 @@ pub unsafe fn mappages(_root: PageTable, _va: usize, _pa: usize, _len: usize, _p
 pub unsafe fn unmappages(_root: PageTable, _va: usize, _len: usize, _free_pages: bool) { todo!("lab-2: unmappages") }
 // TODO(lab-2): 建立代码 RX、只读区 R、数据与可分配区 RW、UART 和 PLIC RW 的映射。
 // 不设置 U，不映射固件保留区；CLINT 由固件负责，PLIC 映射沿用 lab-2，中断驱动由 trap 模块使用。
-// TODO(lab-4): 映射 trampoline RX（不设 U）；从内核池分配首进程栈页，映射 proc::kstack(0) RW。
+// TODO(lab-4): 映射 trampoline RX（不设 U）。
+// TODO(lab-6): 内核池分配 32 个常驻栈页，按槽索引映射 proc::kstack(i) RW，各一页，间隔保护页。
 // 保留相邻保护页及 TRAPFRAME 对应位置不映射；在激活/发布页表前完成。
 pub fn init() { todo!("lab-2: kvm::init") }
 pub fn init_hart() {

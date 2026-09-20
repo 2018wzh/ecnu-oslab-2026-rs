@@ -46,3 +46,20 @@ pub fn pop_off() {
     assert!(!csr::irq_enabled() && DEPTH[cpu].load(Relaxed) > 0);
     if DEPTH[cpu].fetch_sub(1, Relaxed) == 1 && ENABLED[cpu].load(Relaxed) { csr::irq_enable(); }
 }
+
+/// 教师外围：仅关中断时读取本核嵌套深度，用于切换边界检查。
+pub fn interrupt_depth() -> usize {
+    assert!(!csr::irq_enabled());
+    DEPTH[cpu_id()].load(Relaxed)
+}
+
+/// 教师外围：唯一锁释放后应恢复的中断策略；仅限关闭中断、depth=1。
+pub fn resume_interrupts() -> bool {
+    assert_eq!(interrupt_depth(), 1);
+    ENABLED[cpu_id()].load(Relaxed)
+}
+/// 恢复逻辑调用者的中断策略，绝不复制其他 CPU 的 depth 或锁 owner。
+pub fn set_resume_interrupts(enabled: bool) {
+    assert_eq!(interrupt_depth(), 1);
+    ENABLED[cpu_id()].store(enabled, Relaxed);
+}
